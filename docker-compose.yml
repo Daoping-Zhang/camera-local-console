@@ -1,0 +1,32 @@
+services:
+  console:
+    build:
+      context: .
+    image: firtree/camera-local-console:0.1.0
+    container_name: firtree-console
+    command: npm run dev
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - HOST=0.0.0.0
+      - PORT=3000
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+
+  collector:
+    build:
+      context: .
+    image: firtree/camera-local-console:0.1.0
+    container_name: firtree-collector
+    command: npm run collector-server
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - COLLECTOR_PORT=3100
+      - HEARTBEAT_INTERVAL_MS=10000
+      - INTERVAL_MS=15000
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - /opt/firtree/sdk/hikvision-arm64:/opt/hikvision-sdk:ro

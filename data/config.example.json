@@ -1,0 +1,15 @@
+{
+  "server": {
+    "baseUrl": "http://localhost:18091",
+    "loginPath": "/user/login",
+    "cameraDataPath": "/contact/sync/cameraData",
+    "tokenHeader": "Authorization",
+    "token": "",
+    "localDebug": true
+  },
+  "shop": {
+    "shopId": "10001",
+    "shopName": "本地调试门店 A"
+  },
+  "devices": []
+}
