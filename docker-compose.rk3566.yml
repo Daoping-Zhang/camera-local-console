@@ -1,4 +1,4 @@
-services:
+﻿services:
   console:
     image: ${IMAGE_REPOSITORY:-firtree/camera-local-console}:${APP_VERSION:-0.1.0}-arm64
     container_name: firtree-console
@@ -28,3 +28,4 @@ services:
       - ./data:/app/data
       - ./logs:/app/logs
       - ./sdk/hikvision-arm64:/opt/hikvision-sdk:ro
+

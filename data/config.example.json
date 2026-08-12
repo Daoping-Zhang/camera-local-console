@@ -3,9 +3,19 @@
     "baseUrl": "http://localhost:18091",
     "loginPath": "/user/login",
     "cameraDataPath": "/contact/sync/cameraData",
+    "legacyHikBaseUrl": "http://www.fenqunshuju.com",
     "tokenHeader": "Authorization",
     "token": "",
     "localDebug": true
+  },
+  "localCollector": {
+    "baseUrl": "http://127.0.0.1:3100",
+    "autoConnect": true
+  },
+  "cameraDefaults": {
+    "username": "admin",
+    "sdkPort": 8000,
+    "savePassword": false
   },
   "shop": {
     "shopId": "10001",

@@ -1,4 +1,4 @@
-# Development Guide
+﻿# Development Guide
 
 This document describes the project architecture, local development workflow, deployment packages, and release process.
 
@@ -29,12 +29,12 @@ Camera LAN
 ## Components
 
 - `src/server.js`: local web console and gateway on port 3000.
-- `scripts/collector-server.js`: collector manager on port 3100.
-- `scripts/hikvision-collector.py`: HCNetSDK worker used by the collector.
+- `scripts/runtime/collector-server.js`: collector manager on port 3100.
+- `scripts/runtime/hikvision-collector.py`: HCNetSDK worker used by the collector.
 - `src/public/`: browser UI for local registration, logs, collectors, and release status.
 - `release-admin/server.js`: independent release management backend.
-- `scripts/package-windows.ps1`: creates Windows portable packages.
-- `scripts/release-windows.ps1`: creates Windows release package and channel manifest files.
+- `scripts/windows/package-windows.ps1`: creates Windows portable packages.
+- `scripts/windows/release-windows.ps1`: creates Windows release package and channel manifest files.
 - `docker-compose.rk3566.yml`: RK3566/Linux ARM64 runtime compose file.
 
 ## Local Development
@@ -54,7 +54,7 @@ npm run collector-server
 or on Windows:
 
 ```bat
-scripts\start-real-collector.cmd
+scripts\start\start-real-collector.cmd
 ```
 
 Open:
@@ -85,7 +85,7 @@ vendor/hikvision/
 Prepare local SDK files from the unpacked SDK packages:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/prepare-hikvision-sdk.ps1
+powershell -ExecutionPolicy Bypass -File scripts/windows/prepare-hikvision-sdk.ps1
 ```
 
 Override the SDK path:
@@ -99,13 +99,13 @@ HIK_SDK_DIR=/path/to/hikvision-sdk npm run collector-server
 Build a directory package without zip:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/package-windows.ps1 -NoZip
+powershell -ExecutionPolicy Bypass -File scripts/windows/package-windows.ps1 -NoZip
 ```
 
 Build a zip package:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/package-windows.ps1
+powershell -ExecutionPolicy Bypass -File scripts/windows/package-windows.ps1
 ```
 
 The package contains:
@@ -132,7 +132,7 @@ version.json
 Generate a release:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/release-windows.ps1 -Version 0.1.1 -Channel canary
+powershell -ExecutionPolicy Bypass -File scripts/windows/release-windows.ps1 -Version 0.1.1 -Channel canary
 ```
 
 Generated files:
@@ -220,13 +220,13 @@ Use Docker with host networking so subnet scanning and camera SDK networking wor
 Build and push ARM64 image:
 
 ```bash
-IMAGE_REPOSITORY=registry.example.com/firtree/camera-local-console VERSION=0.1.1 bash scripts/docker-build-arm64.sh --push
+IMAGE_REPOSITORY=registry.example.com/firtree/camera-local-console VERSION=0.1.1 bash scripts/docker/docker-build-arm64.sh --push
 ```
 
 Update device:
 
 ```bash
-APP_VERSION=0.1.1 IMAGE_REPOSITORY=registry.example.com/firtree/camera-local-console bash scripts/docker-update-rk3566.sh
+APP_VERSION=0.1.1 IMAGE_REPOSITORY=registry.example.com/firtree/camera-local-console bash scripts/docker/docker-update-rk3566.sh
 ```
 
 Use a domestic/private registry such as Aliyun ACR or Harbor if GitHub/Docker Hub access is unreliable.
@@ -253,3 +253,4 @@ The database column is named `mac_address`, but this project writes the normaliz
 - Add authentication and audit logs to release admin.
 - Add rollback buttons for channels.
 - Add Linux ARM64 image manifests to release admin.
+

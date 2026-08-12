@@ -83,6 +83,13 @@ async function refresh() {
   state = data.state;
   latestEvents = data.events || [];
   setValue("legacyHikBaseUrl", state.server.legacyHikBaseUrl || "");
+  setValue("downCollectorUrl", state.localCollector?.baseUrl || "http://127.0.0.1:3100");
+  setValue("manualCollectorUrl", state.localCollector?.baseUrl || "http://127.0.0.1:3100");
+  setValue("collectorDefaultSdkPort", state.cameraDefaults?.sdkPort || 8000);
+  setValue("sdkPort", state.cameraDefaults?.sdkPort || 8000);
+  setValue("cameraUsername", state.cameraDefaults?.username || "admin");
+  const savePassword = $("saveCameraPassword");
+  if (savePassword) savePassword.value = state.cameraDefaults?.savePassword ? "1" : "";
   setValue("shopId", state.shop.shopId || "");
   setValue("shopName", state.shop.shopName || "");
   renderModeBadge();
@@ -235,9 +242,9 @@ function renderScanResults(devices) {
       <div class="inline-form">
         <input placeholder="Device ID" value="${escapeHtml(device.deviceId || deviceIndexCode || "")}" data-field="deviceId">
         <input placeholder="Device Name" value="${escapeHtml(device.deviceName || device.hostname || "")}" data-field="deviceName">
-        <input placeholder="Username" value="${escapeHtml(device.username || $("cameraUsername")?.value || "admin")}" data-field="username" autocomplete="off">
+        <input placeholder="Username" value="${escapeHtml(device.username || savedDeviceConfig(device)?.username || $("cameraUsername")?.value || "admin")}" data-field="username" autocomplete="off">
         <input placeholder="Password" type="password" value="${escapeHtml(device.password || $("cameraPassword")?.value || "")}" data-field="password" autocomplete="off">
-        <input placeholder="SDK Port" type="number" value="${escapeHtml(device.sdkPort || $("sdkPort")?.value || $("collectorDefaultSdkPort")?.value || 8000)}" data-field="sdkPort">
+        <input placeholder="SDK Port" type="number" value="${escapeHtml(device.sdkPort || savedDeviceConfig(device)?.sdkPort || $("sdkPort")?.value || $("collectorDefaultSdkPort")?.value || 8000)}" data-field="sdkPort">
         <select data-field="type">
           <option value="0" ${Number(device.type || 0) === 0 ? "selected" : ""}>outside</option>
           <option value="1" ${Number(device.type || 0) === 1 ? "selected" : ""}>inside</option>
@@ -266,6 +273,11 @@ function renderScanResults(devices) {
     input.oninput = () => persistScanCardInput(input);
     input.onchange = () => persistScanCardInput(input);
   });
+}
+
+function savedDeviceConfig(device) {
+  const key = normalizeDeviceIndexCode(device.deviceIndexCode || device.macAddress || device.deviceKey || device.ipAddress);
+  return (state?.devices || []).find((item) => normalizeDeviceIndexCode(item.deviceIndexCode || item.macAddress || item.deviceKey || item.ipAddress) === key);
 }
 
 function mergeScanResults(devices) {
@@ -323,7 +335,8 @@ async function bindAndRegister(button) {
           type: Number(read("type")),
           sdkPort: Number(read("sdkPort") || $("sdkPort")?.value || $("collectorDefaultSdkPort")?.value || 8000),
           username: read("username") || $("cameraUsername")?.value,
-          password: read("password") || $("cameraPassword")?.value
+          password: read("password") || $("cameraPassword")?.value,
+          savePassword: $("saveCameraPassword")?.value === "1"
         }
       })
     });
@@ -416,6 +429,29 @@ async function testCollector() {
   } catch (error) {
     setText("downCollectorState", `collector failed: ${error.message}`);
   }
+}
+
+async function saveConfig() {
+  const data = await api("/api/config/save", {
+    method: "POST",
+    body: JSON.stringify({
+      localCollector: {
+        baseUrl: $("downCollectorUrl")?.value || $("manualCollectorUrl")?.value || "http://127.0.0.1:3100",
+        autoConnect: true
+      },
+      server: {
+        legacyHikBaseUrl: $("legacyHikBaseUrl")?.value || ""
+      },
+      cameraDefaults: {
+        username: $("cameraUsername")?.value || "admin",
+        sdkPort: Number($("collectorDefaultSdkPort")?.value || $("sdkPort")?.value || 8000),
+        savePassword: $("saveCameraPassword")?.value === "1"
+      }
+    })
+  });
+  state = data.state;
+  setText("configState", "配置已保存，重启后会自动读取 data/config.json");
+  await refresh();
 }
 
 async function registerCollectorManual() {
@@ -651,7 +687,6 @@ function translateLogMessage(message) {
     "device bound": "device bound",
     "device bound locally": "device bound locally",
     "device register flow completed": "device register flow completed",
-    "collector heartbeat received": "collector heartbeat received",
     "collector device registered": "collector device registered",
     "collector event received locally": "collector event received locally",
     "legacy hik event forwarded": "forwarded to hik-contact-data",
@@ -674,6 +709,7 @@ function bindHandlers() {
     ["testEventBtn", () => testEvent().catch(showError)],
     ["registerCollectorBtn", () => registerCollectorManual().catch(showError)],
     ["testCollectorBtn", () => testCollector().catch(showError)],
+    ["saveConfigBtn", () => saveConfig().catch(showError)],
     ["collectorTestEventBtn", () => triggerCollectorTestEvent().catch(showError)],
     ["refreshCollectorsBtn", () => refresh().catch(showError)],
     ["saveReleaseBtn", () => saveReleaseConfig().catch(showError)],

@@ -101,7 +101,7 @@ function Copy-LightPythonRuntime {
   }
 }
 
-$projectRoot = Resolve-Path "$PSScriptRoot\.."
+$projectRoot = Resolve-Path "$PSScriptRoot\..\.."
 $workspaceRoot = Resolve-Path "$projectRoot\.."
 if (-not $Version) {
   $packageJson = Get-Content -LiteralPath (Join-Path $projectRoot "package.json") -Raw | ConvertFrom-Json
@@ -131,7 +131,7 @@ Copy-Item -LiteralPath (Join-Path $projectRoot "README.md") -Destination $appDir
 if (Test-Path -LiteralPath (Join-Path $projectRoot ".env.example")) {
   Copy-Item -LiteralPath (Join-Path $projectRoot ".env.example") -Destination (Join-Path $configDir ".env.example") -Force
 }
-Copy-Item -LiteralPath (Join-Path $projectRoot "scripts\update-windows.ps1") -Destination (Join-Path $packageDir "update-windows.ps1") -Force
+Copy-Item -LiteralPath (Join-Path $projectRoot "scripts\windows\update-windows.ps1") -Destination (Join-Path $packageDir "update-windows.ps1") -Force
 @{
   version = $Version
   channel = $Channel
@@ -193,7 +193,7 @@ set "COLLECTOR_ADAPTER=hikvision"
 
 start "camera-console-3000" cmd /k ""%NODE_EXE%" "%APP_DIR%\src\server.js""
 timeout /t 2 /nobreak >nul
-start "camera-collector-3100" cmd /k "cd /d "%APP_DIR%" && "%NODE_EXE%" scripts\collector-server.js"
+start "camera-collector-3100" cmd /k "cd /d "%APP_DIR%" && "%NODE_EXE%" scripts\runtime\collector-server.js"
 timeout /t 2 /nobreak >nul
 start "" "http://127.0.0.1:3000"
 '@ | Set-Content -Path (Join-Path $packageDir "start-all.cmd") -Encoding ASCII

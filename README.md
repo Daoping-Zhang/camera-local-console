@@ -54,13 +54,13 @@ logs in to the camera, arms alarms, parses `COMM_ALARM_PDC`, and posts people-co
 Windows Git Bash example:
 
 ```bash
-bash scripts/start-real-collector.sh
+bash scripts/start/start-real-collector.sh
 ```
 
 Windows CMD example:
 
 ```bat
-scripts\start-real-collector.cmd
+scripts\start\start-real-collector.cmd
 ```
 
 The preferred SDK runtime layout is:
@@ -75,13 +75,13 @@ vendor/hikvision/
 Prepare local SDK runtime directories from the unpacked SDK packages:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/prepare-hikvision-sdk.ps1
+powershell -ExecutionPolicy Bypass -File scripts/windows/prepare-hikvision-sdk.ps1
 ```
 
 Override the SDK path when needed:
 
 ```bash
-HIK_SDK_DIR="/d/path/to/hikvision-runtime" bash scripts/start-real-collector.sh
+HIK_SDK_DIR="/d/path/to/hikvision-runtime" bash scripts/start/start-real-collector.sh
 ```
 
 For Linux ARM64 board deployment, mount or copy the arm64 HCNetSDK runtime files to:
@@ -98,7 +98,7 @@ For Linux ARM64 board deployment, mount or copy the arm64 HCNetSDK runtime files
 Then run:
 
 ```bash
-HIK_SDK_DIR=/opt/hikvision-sdk COLLECTOR_ADAPTER=hikvision PYTHON_PATH=python3 node scripts/collector-server.js
+HIK_SDK_DIR=/opt/hikvision-sdk COLLECTOR_ADAPTER=hikvision PYTHON_PATH=python3 node scripts/runtime/collector-server.js
 ```
 
 The camera must have people-counting/PDC alarm upload enabled, otherwise the SDK can log in and arm successfully but no `COMM_ALARM_PDC` events will arrive.
@@ -110,13 +110,13 @@ The collector waits for the console to register devices. The console sends `gate
 Build a portable Windows package:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/package-windows.ps1
+powershell -ExecutionPolicy Bypass -File scripts/windows/package-windows.ps1
 ```
 
 Fast directory-only export without zip:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/package-windows.ps1 -NoZip
+powershell -ExecutionPolicy Bypass -File scripts/windows/package-windows.ps1 -NoZip
 ```
 
 The package includes:
@@ -325,15 +325,15 @@ If Node/npm is not installed on the Windows host, this repository also includes 
 that use the Node runtime bundled with Codex Desktop:
 
 ```bat
-scripts\start-console.cmd
-scripts\start-collector.cmd
+scripts\start\start-console.cmd
+scripts\start\start-collector.cmd
 ```
 
 From Git Bash:
 
 ```bash
-bash scripts/start-console.sh
-bash scripts/start-collector.sh
+bash scripts/start/start-console.sh
+bash scripts/start/start-collector.sh
 ```
 
 Open:
@@ -439,13 +439,14 @@ The release admin manages package import, SHA256 calculation, manifest generatio
 Build ARM64 image:
 
 ```bash
-IMAGE_REPOSITORY=registry.example.com/firtree/camera-local-console VERSION=0.1.1 bash scripts/docker-build-arm64.sh --push
+IMAGE_REPOSITORY=registry.example.com/firtree/camera-local-console VERSION=0.1.1 bash scripts/docker/docker-build-arm64.sh --push
 ```
 
 Run/update on RK3566:
 
 ```bash
-APP_VERSION=0.1.1 IMAGE_REPOSITORY=registry.example.com/firtree/camera-local-console bash scripts/docker-update-rk3566.sh
+APP_VERSION=0.1.1 IMAGE_REPOSITORY=registry.example.com/firtree/camera-local-console bash scripts/docker/docker-update-rk3566.sh
 ```
 
 Use a domestic/private registry such as Aliyun ACR or Harbor when GitHub/Docker Hub access is unreliable.
+

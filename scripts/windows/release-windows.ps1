@@ -8,7 +8,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$projectRoot = Resolve-Path "$PSScriptRoot\.."
+$projectRoot = Resolve-Path "$PSScriptRoot\..\.."
 if (-not $Version) {
   $packageJson = Get-Content -LiteralPath (Join-Path $projectRoot "package.json") -Raw | ConvertFrom-Json
   $Version = [string]$packageJson.version
@@ -25,7 +25,7 @@ if ($NoZip) {
   $packageArgs.NoZip = $true
 }
 
-& (Join-Path $projectRoot "scripts\package-windows.ps1") @packageArgs
+& (Join-Path $projectRoot "scripts\windows\package-windows.ps1") @packageArgs
 
 $distDir = Join-Path $projectRoot "dist"
 $packageDir = Join-Path $distDir $packageName

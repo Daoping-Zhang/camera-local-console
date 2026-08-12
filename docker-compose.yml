@@ -1,4 +1,4 @@
-services:
+﻿services:
   console:
     build:
       context: .
@@ -30,3 +30,4 @@ services:
       - ./data:/app/data
       - ./logs:/app/logs
       - /opt/firtree/sdk/hikvision-arm64:/opt/hikvision-sdk:ro
+

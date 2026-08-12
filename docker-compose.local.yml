@@ -1,4 +1,4 @@
-services:
+﻿services:
   console:
     network_mode: bridge
     ports:
@@ -8,3 +8,4 @@ services:
     network_mode: bridge
     ports:
       - "3100:3100"
+

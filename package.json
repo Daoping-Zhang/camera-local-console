@@ -1,15 +1,16 @@
-{
+﻿{
   "name": "camera-local-console",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "node src/server.js",
-    "fake-collector": "node scripts/fake-collector.js",
-    "collector-server": "node scripts/collector-server.js",
+    "fake-collector": "node scripts/runtime/fake-collector.js",
+    "collector-server": "node scripts/runtime/collector-server.js",
     "release-admin": "node release-admin/server.js"
   },
   "engines": {
     "node": ">=20"
   }
 }
+

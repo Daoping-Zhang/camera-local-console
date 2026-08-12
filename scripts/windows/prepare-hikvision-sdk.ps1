@@ -37,7 +37,7 @@ function Find-WindowsSdkDir {
   return $sdkDll.Directory.FullName
 }
 
-$projectRoot = Resolve-Path "$PSScriptRoot\.."
+$projectRoot = Resolve-Path "$PSScriptRoot\..\.."
 $prepareAll = -not $Windows -and -not $LinuxArm64
 
 if ($prepareAll -or $Windows) {

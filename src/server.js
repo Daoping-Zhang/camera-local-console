@@ -85,8 +85,11 @@ async function handleApi(req, res) {
   }
   if (req.method === "POST" && url.pathname === "/api/collector-proxy/health") {
     const body = await readJson(req);
-    const result = await collectorGet(body.collectorUrl, "/api/health");
-    discoverCollector(result, body.collectorUrl);
+    const collectorUrl = String(body.collectorUrl || state.localCollector?.baseUrl || "http://127.0.0.1:3100").trim();
+    state.localCollector = { ...(state.localCollector || {}), baseUrl: collectorUrl };
+    saveState(state);
+    const result = await collectorGet(collectorUrl, "/api/health");
+    discoverCollector(result, collectorUrl);
     sendJson(res, 200, { ok: true, result });
     return;
   }
@@ -145,6 +148,27 @@ async function handleApi(req, res) {
     sendJson(res, 200, { ok: true, state: publicState() });
     return;
   }
+  if (req.method === "POST" && url.pathname === "/api/config/save") {
+    const body = await readJson(req);
+    state.localCollector = {
+      ...(state.localCollector || {}),
+      baseUrl: String(body.localCollector?.baseUrl || state.localCollector?.baseUrl || "http://127.0.0.1:3100").trim(),
+      autoConnect: body.localCollector?.autoConnect !== false
+    };
+    state.server = {
+      ...(state.server || {}),
+      legacyHikBaseUrl: String(body.server?.legacyHikBaseUrl || state.server?.legacyHikBaseUrl || "").trim()
+    };
+    state.cameraDefaults = {
+      ...(state.cameraDefaults || {}),
+      username: String(body.cameraDefaults?.username || "admin").trim(),
+      sdkPort: Number(body.cameraDefaults?.sdkPort || 8000),
+      savePassword: Boolean(body.cameraDefaults?.savePassword)
+    };
+    saveState(state);
+    sendJson(res, 200, { ok: true, state: publicState() });
+    return;
+  }
   if (req.method === "POST" && url.pathname === "/api/scan") {
     const body = await readJson(req);
     logger.info("scan started", { cidr: body.cidr });
@@ -190,7 +214,18 @@ async function handleApi(req, res) {
   if (req.method === "POST" && url.pathname === "/api/collector/heartbeat") {
     const heartbeat = await readJson(req);
     const collector = upsertCollector(heartbeat);
-    logger.info("collector heartbeat received", { collectorId: collector.collectorId, deviceCount: collector.devices.length });
+    const errorDevices = collector.devices.filter((device) => device.lastError || device.worker?.lastError);
+    if (errorDevices.length) {
+      logger.warn("collector heartbeat contains device errors", {
+        collectorId: collector.collectorId,
+        deviceCount: collector.devices.length,
+        errorDevices: errorDevices.map((device) => ({
+          deviceKey: device.deviceKey,
+          ipAddress: device.ipAddress,
+          error: device.lastError || device.worker?.lastError
+        }))
+      });
+    }
     sendJson(res, 200, { ok: true, collector });
     return;
   }
@@ -225,7 +260,7 @@ function bindLocalDevice(record) {
 
 async function registerDeviceFlow(body) {
   const steps = [];
-  const collectorUrl = body.collectorUrl;
+  const collectorUrl = body.collectorUrl || state.localCollector?.baseUrl;
   const device = buildCollectorDeviceConfig(body.device || {});
   if (!collectorUrl) {
     throw new Error("collectorUrl is required");
@@ -238,6 +273,8 @@ async function registerDeviceFlow(body) {
   steps.push({ name: "local-device-record", status: "running" });
   const record = buildDeviceRecord(device);
   const remote = bindLocalDevice(record);
+  state.localCollector = { ...(state.localCollector || {}), baseUrl: collectorUrl };
+  state.devices = state.devices.filter((item) => deviceIndexCode(item) !== deviceIndexCode(record));
   state.devices.unshift({ ...record, localId: `${Date.now()}`, remote, collector });
   state.devices = state.devices.slice(0, 50);
   saveState(state);
@@ -262,6 +299,7 @@ function buildDeviceRecord(body) {
     deviceKey: body.deviceKey,
     ipAddress: body.ipAddress
   });
+  const savePassword = body.savePassword ?? state.cameraDefaults?.savePassword;
   return {
     shopId,
     shopName: body.shopName || state.shop.shopName || "Local Shop",
@@ -272,6 +310,10 @@ function buildDeviceRecord(body) {
     deviceType: body.deviceType || "Hikvision",
     ipAddress: body.ipAddress || "",
     deviceName: body.deviceName || `Camera ${macAddress}`,
+    username: body.username || body.sdk?.username || state.cameraDefaults?.username || "admin",
+    password: savePassword ? (body.password || body.sdk?.password || "") : "",
+    sdkPort: Number(body.sdkPort || body.sdk?.port || state.cameraDefaults?.sdkPort || 8000),
+    savePassword: Boolean(savePassword),
     city: body.city || "",
     remark: body.remark || "registered by local console"
   };
@@ -672,7 +714,10 @@ async function serveStatic(req, res) {
     ".css": "text/css; charset=utf-8",
     ".js": "application/javascript; charset=utf-8"
   };
-  res.writeHead(200, { "Content-Type": contentTypes[ext] || "application/octet-stream" });
+  res.writeHead(200, {
+    "Content-Type": contentTypes[ext] || "application/octet-stream",
+    "Cache-Control": "no-store"
+  });
   fs.createReadStream(filePath).pipe(res);
 }
 

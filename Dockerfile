@@ -1,4 +1,4 @@
-FROM m.daocloud.io/docker.io/library/node:20-bookworm-slim
+﻿FROM m.daocloud.io/docker.io/library/node:20-bookworm-slim
 
 WORKDIR /app
 
@@ -14,3 +14,4 @@ RUN mkdir -p /app/data /app/logs
 EXPOSE 3000 3100
 
 CMD ["npm", "run", "dev"]
+

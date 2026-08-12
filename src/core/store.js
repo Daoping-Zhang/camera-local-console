@@ -14,6 +14,15 @@ const defaultState = {
     token: "",
     localDebug: false
   },
+  localCollector: {
+    baseUrl: "http://127.0.0.1:3100",
+    autoConnect: true
+  },
+  cameraDefaults: {
+    username: "admin",
+    sdkPort: 8000,
+    savePassword: false
+  },
   shop: {
     shopId: "",
     shopName: ""

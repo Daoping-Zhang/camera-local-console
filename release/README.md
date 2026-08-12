@@ -1,4 +1,4 @@
-# Release Update Server
+﻿# Release Update Server
 
 Deploy Windows update files under:
 
@@ -46,7 +46,7 @@ It replaces application/runtime/SDK files from the downloaded package, writes a 
 Generate a Windows release locally:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/release-windows.ps1 -Version 0.1.1 -Channel canary
+powershell -ExecutionPolicy Bypass -File scripts/windows/release-windows.ps1 -Version 0.1.1 -Channel canary
 ```
 
 CI is optional. For China-hosted deployments, a clean manual flow is:
@@ -68,13 +68,13 @@ release/out/channels/stable.json -> server channels/stable.json
 Docker images are recommended for RK3566/Linux ARM64 deployments. Use an image repository such as Aliyun ACR, Harbor, Docker Hub, or another private registry:
 
 ```bash
-IMAGE_REPOSITORY=registry.example.com/firtree/camera-local-console VERSION=0.1.1 bash scripts/docker-build-arm64.sh --push
+IMAGE_REPOSITORY=registry.example.com/firtree/camera-local-console VERSION=0.1.1 bash scripts/docker/docker-build-arm64.sh --push
 ```
 
 RK3566 devices update with:
 
 ```bash
-APP_VERSION=0.1.1 IMAGE_REPOSITORY=registry.example.com/firtree/camera-local-console bash scripts/docker-update-rk3566.sh
+APP_VERSION=0.1.1 IMAGE_REPOSITORY=registry.example.com/firtree/camera-local-console bash scripts/docker/docker-update-rk3566.sh
 ```
 
 ## Release Admin
@@ -88,7 +88,7 @@ npm run release-admin
 or:
 
 ```bat
-scripts\start-release-admin.cmd
+scripts\start\start-release-admin.cmd
 ```
 
 Defaults:
@@ -124,3 +124,4 @@ First version supports:
 - view channel history
 
 For production, put it behind nginx basic auth, VPN, or an internal-only firewall rule.
+
