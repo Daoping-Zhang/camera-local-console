@@ -1,0 +1,30 @@
+services:
+  console:
+    image: ${IMAGE_REPOSITORY:-firtree/camera-local-console}:${APP_VERSION:-0.1.0}-arm64
+    container_name: firtree-console
+    command: npm run dev
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - HOST=0.0.0.0
+      - PORT=3000
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+
+  collector:
+    image: ${IMAGE_REPOSITORY:-firtree/camera-local-console}:${APP_VERSION:-0.1.0}-arm64
+    container_name: firtree-collector
+    command: npm run collector-server
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - COLLECTOR_PORT=3100
+      - COLLECTOR_ADAPTER=hikvision
+      - HIK_SDK_DIR=/opt/hikvision-sdk
+      - PYTHON_PATH=python3
+      - HEARTBEAT_INTERVAL_MS=10000
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./sdk/hikvision-arm64:/opt/hikvision-sdk:ro

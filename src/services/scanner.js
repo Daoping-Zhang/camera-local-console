@@ -15,7 +15,7 @@ export function listInterfaces() {
         name,
         address: entry.address,
         netmask: entry.netmask,
-        cidr: `${entry.address}/24`
+        cidr: `${entry.address}/${netmaskToPrefix(entry.netmask)}`
       })));
 }
 
@@ -51,8 +51,9 @@ export async function scanSubnet(cidr, options = {}) {
 
 async function lookupMacAddress(host) {
   try {
-    const { stdout } = await execFileAsync("arp", ["-n", host], { timeout: 800 });
-    const match = stdout.match(/(?:[0-9a-f]{1,2}:){5}[0-9a-f]{1,2}/i);
+    const args = process.platform === "win32" ? ["-a", host] : ["-n", host];
+    const { stdout } = await execFileAsync("arp", args, { timeout: 800 });
+    const match = stdout.match(/(?:[0-9a-f]{1,2}[:-]){5}[0-9a-f]{1,2}/i);
     return match ? normalizeMac(match[0]) : "";
   } catch {
     return "";
@@ -60,7 +61,13 @@ async function lookupMacAddress(host) {
 }
 
 function normalizeMac(mac) {
-  return mac.split(":").map((part) => part.padStart(2, "0").toUpperCase()).join(":");
+  return mac.split(/[:-]/).map((part) => part.padStart(2, "0").toUpperCase()).join(":");
+}
+
+function netmaskToPrefix(netmask) {
+  return String(netmask || "255.255.255.0")
+    .split(".")
+    .reduce((bits, part) => bits + Number(part).toString(2).replaceAll("0", "").length, 0);
 }
 
 function cidrToBase(cidr) {

@@ -9,6 +9,7 @@ const defaultState = {
     baseUrl: "http://localhost:18091",
     loginPath: "/user/login",
     cameraDataPath: "/contact/sync/cameraData",
+    legacyHikBaseUrl: "",
     tokenHeader: "Authorization",
     token: "",
     localDebug: false
@@ -16,6 +17,13 @@ const defaultState = {
   shop: {
     shopId: "",
     shopName: ""
+  },
+  release: {
+    version: "0.1.0",
+    channel: "stable",
+    manifestUrl: "http://www.fenqunshuju.com/releases/camera-local-console/channels/stable.json",
+    lastCheckAt: "",
+    lastCheckResult: null
   },
   devices: []
 };

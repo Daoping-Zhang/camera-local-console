@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "node src/server.js",
     "fake-collector": "node scripts/fake-collector.js",
-    "collector-server": "node scripts/collector-server.js"
+    "collector-server": "node scripts/collector-server.js",
+    "release-admin": "node release-admin/server.js"
   },
   "engines": {
     "node": ">=20"

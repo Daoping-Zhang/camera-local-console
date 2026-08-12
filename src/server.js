@@ -14,6 +14,9 @@ const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || "127.0.0.1";
 
 let state = loadState();
+if (process.env.LEGACY_HIK_BASE_URL) {
+  state.server.legacyHikBaseUrl = process.env.LEGACY_HIK_BASE_URL;
+}
 const recentEvents = [];
 const collectors = new Map();
 const debugShops = [
@@ -52,6 +55,34 @@ async function handleApi(req, res) {
     sendJson(res, 200, { ok: true, collectors: listCollectors() });
     return;
   }
+  if (req.method === "GET" && url.pathname === "/api/release") {
+    sendJson(res, 200, { ok: true, release: releaseState() });
+    return;
+  }
+  if (req.method === "POST" && url.pathname === "/api/release/configure") {
+    const body = await readJson(req);
+    const channel = String(body.channel || state.release?.channel || "stable").trim() || "stable";
+    state.release = {
+      ...(state.release || {}),
+      channel,
+      manifestUrl: String(body.manifestUrl || defaultManifestUrl(channel)).trim()
+    };
+    saveState(state);
+    sendJson(res, 200, { ok: true, release: releaseState() });
+    return;
+  }
+  if (req.method === "POST" && url.pathname === "/api/release/check") {
+    const body = await readJson(req);
+    const result = await checkRelease(body.manifestUrl || state.release?.manifestUrl);
+    state.release = {
+      ...(state.release || {}),
+      lastCheckAt: new Date().toISOString(),
+      lastCheckResult: result
+    };
+    saveState(state);
+    sendJson(res, 200, { ok: true, release: releaseState(), result });
+    return;
+  }
   if (req.method === "POST" && url.pathname === "/api/collector-proxy/health") {
     const body = await readJson(req);
     const result = await collectorGet(body.collectorUrl, "/api/health");
@@ -61,13 +92,22 @@ async function handleApi(req, res) {
   }
   if (req.method === "POST" && url.pathname === "/api/collector-proxy/register-device") {
     const body = await readJson(req);
-    const result = await collectorPost(body.collectorUrl, "/api/devices/register", body.device);
+    const result = await collectorPost(body.collectorUrl, "/api/devices/register", buildCollectorDeviceConfig(body.device || {}));
     sendJson(res, 200, { ok: true, result });
     return;
   }
   if (req.method === "POST" && url.pathname === "/api/collector-proxy/test-event") {
     const body = await readJson(req);
     const result = await collectorPost(body.collectorUrl, "/api/events/test", { deviceKey: body.deviceKey });
+    sendJson(res, 200, { ok: true, result });
+    return;
+  }
+  if (req.method === "POST" && url.pathname === "/api/collector-proxy/delete-device") {
+    const body = await readJson(req);
+    const result = await collectorPost(body.collectorUrl, "/api/devices/delete", {
+      deviceKey: body.deviceKey,
+      macAddress: body.macAddress
+    });
     sendJson(res, 200, { ok: true, result });
     return;
   }
@@ -78,32 +118,19 @@ async function handleApi(req, res) {
     return;
   }
   if (req.method === "GET" && url.pathname === "/api/shops") {
-    const shops = state.server.localDebug ? debugShops : await listRemoteShops();
-    sendJson(res, 200, { ok: true, shops });
+    sendJson(res, 200, { ok: true, shops: debugShops });
     return;
   }
-  if (req.method === "POST" && url.pathname === "/api/debug-mode") {
+  if (req.method === "POST" && url.pathname === "/api/legacy-hik/connect") {
     const body = await readJson(req);
-    state.server.localDebug = Boolean(body.enabled);
-    if (state.server.localDebug) {
-      state.server.token = "";
-      state.shop = state.shop.shopId ? state.shop : { shopId: debugShops[0].id, shopName: debugShops[0].name };
+    const baseUrl = String(body.baseUrl || "").trim();
+    if (!baseUrl) {
+      throw new Error("hik-contact-data URL is required");
     }
+    state.server.legacyHikBaseUrl = baseUrl;
     saveState(state);
-    logger.info("local debug mode changed", { enabled: state.server.localDebug });
-    sendJson(res, 200, { ok: true, state: publicState(), shops: state.server.localDebug ? debugShops : [] });
-    return;
-  }
-  if (req.method === "POST" && url.pathname === "/api/server/connect") {
-    const body = await readJson(req);
-    state.server = {
-      ...state.server,
-      baseUrl: body.baseUrl || state.server.baseUrl,
-      loginPath: body.loginPath || state.server.loginPath,
-      cameraDataPath: body.cameraDataPath || state.server.cameraDataPath
-    };
-    const result = await loginRemote(body.username, body.password);
-    saveState(state);
+    const result = await probeLegacyHik(baseUrl);
+    logger.info("legacy hik service configured", { baseUrl, reachable: result.reachable, status: result.status });
     sendJson(res, 200, { ok: true, result, state: publicState() });
     return;
   }
@@ -129,12 +156,29 @@ async function handleApi(req, res) {
   if (req.method === "POST" && url.pathname === "/api/devices/bind") {
     const body = await readJson(req);
     const record = buildDeviceRecord(body);
-    const remote = state.server.localDebug ? bindLocalDevice(record) : await bindRemoteDevice(record);
+    const remote = bindLocalDevice(record);
     state.devices.unshift({ ...record, localId: `${Date.now()}`, remote });
     state.devices = state.devices.slice(0, 50);
     saveState(state);
     logger.info("device bound", { shopId: record.shopId, macAddress: record.macAddress, type: record.type });
     sendJson(res, 200, { ok: true, record, remote, state: publicState() });
+    return;
+  }
+  if (req.method === "POST" && url.pathname === "/api/devices/delete") {
+    const body = await readJson(req);
+    const key = deviceIndexCode({ macAddress: body.deviceIndexCode || body.macAddress || body.deviceKey || body.ipAddress });
+    const before = state.devices.length;
+    state.devices = state.devices.filter((device) => {
+      const deviceKey = deviceIndexCode({
+        macAddress: device.deviceIndexCode || device.macAddress,
+        deviceKey: device.deviceKey || device.deviceId,
+        ipAddress: device.ipAddress
+      });
+      return deviceKey !== key;
+    });
+    saveState(state);
+    logger.info("device deleted locally", { deviceKey: key, deleted: before - state.devices.length });
+    sendJson(res, 200, { ok: true, deleted: before - state.devices.length, state: publicState() });
     return;
   }
   if (req.method === "POST" && url.pathname === "/api/collector/events") {
@@ -170,42 +214,6 @@ async function handleApi(req, res) {
   sendJson(res, 404, { ok: false, error: "not found" });
 }
 
-async function loginRemote(username, password) {
-  if (!username || !password) {
-    throw new Error("username and password are required");
-  }
-  const url = joinUrl(state.server.baseUrl, state.server.loginPath);
-  const response = await postJson(url, { username, password });
-  if (!response.ok || response.data?.code !== 200) {
-    logger.warn("remote login failed", { status: response.status, response: response.data });
-    throw new Error(response.data?.message || "remote login failed");
-  }
-  const data = response.data.data || {};
-  state.server.tokenHeader = data.tokenHeader || state.server.tokenHeader || "Authorization";
-  state.server.token = data.token || "";
-  logger.info("remote login succeeded", { baseUrl: state.server.baseUrl, tokenHeader: state.server.tokenHeader });
-  return { status: response.status, data: response.data };
-}
-
-async function listRemoteShops() {
-  const url = joinUrl(state.server.baseUrl, "/shop/listShopNames");
-  const headers = {};
-  if (state.server.token) {
-    headers[state.server.tokenHeader || "Authorization"] = state.server.token;
-  }
-  const response = await getJson(url, headers);
-  if (!response.ok || response.data?.code !== 200) {
-    logger.warn("remote shop list failed", { status: response.status, response: response.data });
-    throw new Error(response.data?.message || "remote shop list failed");
-  }
-  const shops = Array.isArray(response.data.data) ? response.data.data : [];
-  logger.info("remote shop list loaded", { count: shops.length });
-  return shops.map((shop) => ({
-    id: shop.id ?? shop.shopId,
-    name: shop.name ?? shop.shopName ?? shop.shop_name ?? ""
-  })).filter((shop) => shop.id);
-}
-
 function bindLocalDevice(record) {
   logger.info("device bound locally", { shopId: record.shopId, macAddress: record.macAddress, type: record.type });
   return {
@@ -218,7 +226,7 @@ function bindLocalDevice(record) {
 async function registerDeviceFlow(body) {
   const steps = [];
   const collectorUrl = body.collectorUrl;
-  const device = body.device || {};
+  const device = buildCollectorDeviceConfig(body.device || {});
   if (!collectorUrl) {
     throw new Error("collectorUrl is required");
   }
@@ -227,58 +235,46 @@ async function registerDeviceFlow(body) {
   const collector = await collectorPost(collectorUrl, "/api/devices/register", device);
   steps[steps.length - 1] = { name: "collector-register", status: "success", result: collector };
 
-  steps.push({ name: state.server.localDebug ? "gateway-local-bind" : "remote-device-bind", status: "running" });
+  steps.push({ name: "local-device-record", status: "running" });
   const record = buildDeviceRecord(device);
-  const remote = state.server.localDebug ? bindLocalDevice(record) : await bindRemoteDevice(record);
+  const remote = bindLocalDevice(record);
   state.devices.unshift({ ...record, localId: `${Date.now()}`, remote, collector });
   state.devices = state.devices.slice(0, 50);
   saveState(state);
-  steps[steps.length - 1] = { name: state.server.localDebug ? "gateway-local-bind" : "remote-device-bind", status: "success", result: remote };
+  steps[steps.length - 1] = { name: "local-device-record", status: "success", result: remote };
 
   logger.info("device register flow completed", {
     collectorUrl,
     deviceKey: device.deviceKey,
-    shopId: record.shopId,
-    localDebug: state.server.localDebug
+    shopId: record.shopId
   });
   return { steps, record, collector, remote };
 }
 
 function buildDeviceRecord(body) {
-  const shopId = String(body.shopId || state.shop.shopId || "");
-  if (!shopId) {
-    throw new Error("shopId is required");
-  }
+  const shopId = String(body.shopId || state.shop.shopId || "local-shop");
   const macAddress = String(body.macAddress || body.deviceId || body.ipAddress || "").trim();
   if (!macAddress) {
     throw new Error("macAddress is required");
   }
+  const indexCode = deviceIndexCode({
+    macAddress: body.deviceIndexCode || macAddress,
+    deviceKey: body.deviceKey,
+    ipAddress: body.ipAddress
+  });
   return {
     shopId,
-    shopName: body.shopName || state.shop.shopName || "",
+    shopName: body.shopName || state.shop.shopName || "Local Shop",
     type: Number(body.type),
     macAddress,
-    deviceId: body.deviceId || macAddress,
+    deviceIndexCode: indexCode,
+    deviceId: body.deviceId || indexCode || macAddress,
     deviceType: body.deviceType || "Hikvision",
     ipAddress: body.ipAddress || "",
     deviceName: body.deviceName || `Camera ${macAddress}`,
     city: body.city || "",
     remark: body.remark || "registered by local console"
   };
-}
-
-async function bindRemoteDevice(record) {
-  const url = joinUrl(state.server.baseUrl, "/shop/insertDevice");
-  const headers = {};
-  if (state.server.token) {
-    headers[state.server.tokenHeader || "Authorization"] = state.server.token;
-  }
-  const response = await postJson(url, record, headers);
-  if (!response.ok || response.data?.code !== 200) {
-    logger.warn("remote device bind failed", { status: response.status, response: response.data });
-    throw new Error(response.data?.message || "remote device bind failed");
-  }
-  return response.data;
 }
 
 async function collectorGet(baseUrl, path) {
@@ -301,27 +297,224 @@ async function ingestCollectorEvent(event) {
   if (event.collectorId) {
     touchCollectorFromEvent(event);
   }
-  const payload = buildPeopleCountingPayload(event);
-  const url = joinUrl(state.server.baseUrl, state.server.cameraDataPath);
-  const response = await postJson(url, payload);
+  const payload = event.eventType === "HumanBodyComparison" ? buildLegacyHumanBodyPayload(event) : buildPeopleCountingPayload(event);
+  let response = {
+    ok: false,
+    status: 0,
+    data: { message: "remote reporting skipped" }
+  };
+  const legacy = await forwardLegacyHikEvent(event);
   const summary = {
     id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
     time: new Date().toISOString(),
     event,
+    deviceIndexCode: deviceIndexCode(event),
     payload,
-    response
+    response,
+    legacy
   };
   recentEvents.unshift(summary);
   recentEvents.splice(100);
-  if (response.ok && response.data?.code === 200) {
-    logger.info("collector event reported", {
-      macAddress: payload.EventNotificationAlert.macAddress,
-      enter: payload.EventNotificationAlert.peopleCounting.enter,
-      exit: payload.EventNotificationAlert.peopleCounting.exit
-    });
-  } else {
-    logger.warn("collector event report failed", { response });
+  logger.info("collector event received locally", {
+    macAddress: event.macAddress || event.deviceKey,
+    eventType: event.eventType,
+    enter: event.enter,
+    exit: event.exit,
+    legacyForwarded: legacy.enabled ? legacy.ok : false
+  });
+}
+
+function buildCollectorDeviceConfig(body) {
+  return {
+    ...body,
+    gatewayUrl: body.gatewayUrl || `http://${HOST}:${PORT}`,
+    sdk: {
+      vendor: body.sdk?.vendor || body.vendor || "hikvision-real",
+      port: Number(body.sdk?.port || body.sdkPort || body.port || 8000),
+      username: body.sdk?.username || body.username || "",
+      password: body.sdk?.password || body.password || ""
+    }
+  };
+}
+
+async function probeLegacyHik(baseUrl) {
+  const eventRcv = await probeLegacyEndpoint(baseUrl, "/api/hik/eventRcv", buildLegacyPeopleCountingPayload({
+    macAddress: "00:00:00:00:00:00",
+    ipAddress: "127.0.0.1",
+    channelId: 1,
+    enter: 0,
+    exit: 0,
+    duplicatePeople: 0
+  }));
+  const eventRtbw = await probeLegacyEndpoint(baseUrl, "/api/hik/eventRtbw", buildLegacyHumanBodyPayload({
+    eventType: "HumanBodyComparison",
+    macAddress: "00:00:00:00:00:00",
+    ipAddress: "127.0.0.1",
+    channelId: 1,
+    raw: {
+      isapi: {
+        eventType: "humanBodyComparison",
+        dateTime: new Date().toISOString(),
+        HumanBodyComparison: [{ HumanInfo: { humanID: 0, ageGroup: "unknown", gender: "unknown", mask: "unknown", hat: "unknown" } }]
+      },
+      pictureFiles: []
+    }
+  }));
+  return {
+    reachable: eventRcv.ok && eventRtbw.ok,
+    status: eventRcv.status || eventRtbw.status || 0,
+    message: eventRcv.ok && eventRtbw.ok ? "两个接口均可用" : "至少一个接口不可用",
+    endpoints: { eventRcv, eventRtbw }
+  };
+}
+
+async function probeLegacyEndpoint(baseUrl, path, payload) {
+  const url = joinUrl(baseUrl, path);
+  try {
+    const response = await postJson(url, payload);
+    return {
+      ok: response.ok && response.data?.code === 200,
+      status: response.status,
+      path,
+      message: response.data?.message || ""
+    };
+  } catch (error) {
+    return { ok: false, status: 0, path, message: error.message };
   }
+}
+
+async function forwardLegacyHikEvent(event) {
+  const baseUrl = state.server.legacyHikBaseUrl;
+  if (!baseUrl) return { enabled: false, deviceIndexCode: deviceIndexCode(event) };
+
+  const isHumanBody = event.eventType === "HumanBodyComparison";
+  const path = isHumanBody ? "/api/hik/eventRtbw" : "/api/hik/eventRcv";
+  const payload = isHumanBody ? buildLegacyHumanBodyPayload(event) : buildLegacyPeopleCountingPayload(event);
+  if (!payload) return { enabled: true, skipped: true, deviceIndexCode: deviceIndexCode(event), path };
+
+  const url = joinUrl(baseUrl, path);
+  try {
+    const response = await postJson(url, payload);
+    if (response.ok && response.data?.code === 200) {
+      logger.info("legacy hik event forwarded", { url, eventType: event.eventType, deviceIndexCode: deviceIndexCode(event) });
+    } else {
+      logger.warn("legacy hik event forward failed", { url, eventType: event.eventType, response });
+    }
+    return { enabled: true, ok: response.ok && response.data?.code === 200, url, path, deviceIndexCode: deviceIndexCode(event), response };
+  } catch (error) {
+    logger.warn("legacy hik event forward failed", { url, eventType: event.eventType, error: error.message });
+    return { enabled: true, ok: false, url, path, deviceIndexCode: deviceIndexCode(event), error: error.message };
+  }
+}
+
+function buildLegacyPeopleCountingPayload(event) {
+  const occurredAt = legacyTime(event.occurredAt);
+  const indexCode = deviceIndexCode(event);
+  return {
+    method: "OnEventNotify",
+    params: {
+      ability: "event_pdc",
+      events: [{
+        data: {
+          channelID: Number(event.channelId || 1),
+          dataType: "flowStatistic",
+          dateTime: occurredAt,
+          eventDescription: "peopleCounting",
+          eventType: "peopleCounting",
+          ipAddress: event.ipAddress || "",
+          peopleCounting: [{
+            childEnterNum: Number(event.childEnter || 0),
+            childLeaveNum: Number(event.childExit || 0),
+            duplicatePeople: Number(event.duplicatePeople || 0),
+            enter: Number(event.enter || 0),
+            exit: Number(event.exit || 0),
+            pass: Number(event.passing || 0),
+            statisticalMethods: "realTime",
+            targetAttrs: {
+              cameraIndexCode: indexCode,
+              deviceIndexCode: indexCode
+            }
+          }],
+          portNo: 8000,
+          recvTime: occurredAt,
+          sendTime: occurredAt
+        },
+        eventId: `local-${indexCode}-${Date.now()}`,
+        eventType: 131616,
+        happenTime: occurredAt,
+        srcIndex: indexCode,
+        srcParentIndex: indexCode,
+        srcType: "camera",
+        status: 0,
+        timeout: 0
+      }],
+      sendTime: occurredAt
+    }
+  };
+}
+
+function buildLegacyHumanBodyPayload(event) {
+  const data = event.raw?.isapi;
+  if (!data || data.eventType !== "humanBodyComparison" || !Array.isArray(data.HumanBodyComparison)) return null;
+  const indexCode = deviceIndexCode(event);
+  const occurredAt = legacyTime(event.occurredAt || data.dateTime);
+  const pictureFiles = event.raw?.pictureFiles || [];
+  const comparisons = data.HumanBodyComparison.map((item) => ({
+    HumanInfo: {
+      ...(item.HumanInfo || {}),
+      LocalPictureFiles: pictureFiles
+    },
+    targetAttrs: {
+      cameraIndexCode: indexCode,
+      deviceIndexCode: indexCode,
+      picServerIndexCode: indexCode
+    }
+  }));
+  return {
+    method: "OnEventNotify",
+    params: {
+      ability: "event_body",
+      events: [{
+        data: {
+          ...data,
+          dateTime: occurredAt,
+          deviceID: indexCode,
+          macAddress: event.macAddress || event.deviceKey,
+          HumanBodyComparison: comparisons,
+          targetAttrs: {
+            cameraIndexCode: indexCode,
+            deviceIndexCode: indexCode,
+            imageServerCode: indexCode,
+            picServerIndexCode: indexCode
+          }
+        },
+        eventId: `local-body-${indexCode}-${Date.now()}`,
+        eventType: 262147,
+        happenTime: occurredAt,
+        srcIndex: indexCode,
+        srcParentIndex: indexCode,
+        srcType: "camera",
+        status: 1,
+        timeout: 30
+      }],
+      sendTime: occurredAt
+    }
+  };
+}
+
+function deviceIndexCode(event) {
+  return String(event.macAddress || event.deviceKey || event.ipAddress || "")
+    .trim()
+    .toLowerCase()
+    .replaceAll(":", "")
+    .replaceAll("-", "");
+}
+
+function legacyTime(value) {
+  if (!value) return new Date().toISOString();
+  const text = String(value);
+  if (text.includes("T")) return text.includes("+") || text.endsWith("Z") ? text : `${text}.000+08:00`;
+  return `${text.replace(" ", "T")}.000+08:00`;
 }
 
 function upsertCollector(heartbeat) {
@@ -410,11 +603,54 @@ function listCollectors() {
 function publicState() {
   return {
     ...state,
+    release: releaseState(),
     server: {
-      ...state.server,
-      mode: state.server.localDebug ? "local-debug" : "remote",
-      token: state.server.token ? "******" : ""
+      legacyHikBaseUrl: state.server.legacyHikBaseUrl || "",
+      mode: state.server.legacyHikBaseUrl ? "hik-contact-data" : "offline",
+      token: ""
     }
+  };
+}
+
+function defaultManifestUrl(channel = "stable") {
+  return `http://www.fenqunshuju.com/releases/camera-local-console/channels/${channel}.json`;
+}
+
+function releaseState() {
+  const release = state.release || {};
+  const channel = release.channel || "stable";
+  return {
+    version: release.version || readPackageVersion(),
+    channel,
+    manifestUrl: release.manifestUrl || defaultManifestUrl(channel),
+    lastCheckAt: release.lastCheckAt || "",
+    lastCheckResult: release.lastCheckResult || null
+  };
+}
+
+function readPackageVersion() {
+  try {
+    const packageJson = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf8"));
+    return packageJson.version || "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+}
+
+async function checkRelease(manifestUrl) {
+  const current = releaseState();
+  const url = String(manifestUrl || current.manifestUrl || "").trim();
+  if (!url) throw new Error("manifestUrl is required");
+  const response = await fetch(url, { headers: { "Accept": "application/json" } });
+  if (!response.ok) throw new Error(`manifest request failed with ${response.status}`);
+  const manifest = await response.json();
+  const latestVersion = String(manifest.version || "");
+  return {
+    currentVersion: current.version,
+    latestVersion,
+    updateAvailable: Boolean(latestVersion && latestVersion !== current.version),
+    manifestUrl: url,
+    manifest
   };
 }
 

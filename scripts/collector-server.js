@@ -1,9 +1,16 @@
 import http from "node:http";
+import { spawn } from "node:child_process";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const port = Number(process.env.COLLECTOR_PORT || 3100);
 const collectorId = process.env.COLLECTOR_ID || "collector-local-adapter";
+const adapterMode = process.env.COLLECTOR_ADAPTER || "fake";
+const pythonPath = process.env.PYTHON_PATH || "python";
 let gatewayUrl = (process.env.GATEWAY_URL || "").replace(/\/+$/, "");
 const devices = new Map();
+const workers = new Map();
 const logs = [];
 let lastHeartbeatAt = "";
 let lastEventAt = "";
@@ -41,6 +48,17 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 200, { ok: true, collectorId, deviceKey: device.deviceKey, status: "registered", connectionStatus: device.connectionStatus, device });
       return;
     }
+    if (req.method === "POST" && url.pathname === "/api/devices/delete") {
+      const body = await readJson(req);
+      const deviceKey = String(body.deviceKey || body.macAddress || "").trim();
+      if (!deviceKey) throw new Error("deviceKey is required");
+      stopWorker(deviceKey);
+      const existed = devices.delete(deviceKey);
+      await sendHeartbeat();
+      writeLog("info", "device deleted", { deviceKey, existed });
+      sendJson(res, 200, { ok: true, collectorId, deviceKey, deleted: existed });
+      return;
+    }
     if (req.method === "POST" && url.pathname === "/api/events/test") {
       const body = await readJson(req);
       const event = await sendEvent(body.deviceKey || firstDeviceKey());
@@ -60,7 +78,9 @@ server.listen(port, "0.0.0.0", () => {
 });
 
 setInterval(sendHeartbeat, Number(process.env.HEARTBEAT_INTERVAL_MS || 10000));
-setInterval(() => sendEvent(firstDeviceKey()).catch((error) => console.error("event failed", error.message)), Number(process.env.INTERVAL_MS || 15000));
+if (adapterMode !== "hikvision") {
+  setInterval(() => sendEvent(firstDeviceKey()).catch((error) => console.error("event failed", error.message)), Number(process.env.INTERVAL_MS || 15000));
+}
 
 function normalizeDevice(body) {
   const deviceKey = String(body.deviceKey || body.macAddress || body.ipAddress || "").trim();
@@ -78,7 +98,7 @@ function normalizeDevice(body) {
       vendor: body.sdk?.vendor || "hikvision",
       port: Number(body.sdk?.port || 8000),
       username: body.sdk?.username || "",
-      password: body.sdk?.password ? "******" : ""
+      password: body.sdk?.password || ""
     },
     status: "pending",
     connectionStatus: "pending",
@@ -86,8 +106,31 @@ function normalizeDevice(body) {
   };
 }
 
+function publicDevice(device) {
+  const worker = workers.get(device.deviceKey);
+  return {
+    ...device,
+    sdk: {
+      ...device.sdk,
+      password: device.sdk?.password ? "******" : ""
+    },
+    worker: worker ? {
+      status: worker.status,
+      startedAt: worker.startedAt,
+      lastError: worker.lastError
+    } : undefined
+  };
+}
+
+function adapterName() {
+  return adapterMode === "hikvision" ? "hikvision-hcnetsdk" : "fake-http-collector";
+}
+
 async function connectCamera(device) {
   writeLog("info", "camera connection started", { deviceKey: device.deviceKey, ipAddress: device.ipAddress, sdkPort: device.sdk.port });
+  if (adapterMode === "hikvision" || device.sdk.vendor === "hikvision-real") {
+    return startHikvisionWorker(device);
+  }
   await new Promise((resolve) => setTimeout(resolve, Number(process.env.FAKE_CONNECT_DELAY_MS || 200)));
   const connected = process.env.FAKE_CONNECT_FAIL !== "1";
   if (!connected) {
@@ -104,18 +147,124 @@ async function connectCamera(device) {
   return next;
 }
 
+function startHikvisionWorker(device) {
+  if (!gatewayUrl) {
+    throw new Error("gatewayUrl is required before starting hikvision worker");
+  }
+  if (!device.ipAddress) {
+    throw new Error("camera ipAddress is required");
+  }
+  if (!device.sdk.username || !device.sdk.password) {
+    throw new Error("camera sdk username and password are required");
+  }
+
+  stopWorker(device.deviceKey);
+
+  const args = [
+    path.join(__dirname, "hikvision-collector.py"),
+    "--camera-ip", device.ipAddress,
+    "--camera-port", String(device.sdk.port || 8000),
+    "--username", device.sdk.username,
+    "--password", device.sdk.password,
+    "--device-key", device.deviceKey,
+    "--mac-address", device.macAddress || device.deviceKey,
+    "--channel-id", "1",
+    "--collector-id", collectorId,
+    "--gateway-url", gatewayUrl
+  ];
+  const child = spawn(pythonPath, args, {
+    cwd: path.join(__dirname, ".."),
+    env: process.env,
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  const worker = {
+    process: child,
+    startedAt: new Date().toISOString(),
+    status: "starting",
+    lastError: ""
+  };
+  workers.set(device.deviceKey, worker);
+
+  child.stdout.on("data", (chunk) => handleWorkerOutput(device, chunk));
+  child.stderr.on("data", (chunk) => handleWorkerError(device, chunk));
+  child.on("exit", (code, signal) => {
+    const current = workers.get(device.deviceKey);
+    if (current?.process === child) {
+      current.status = "stopped";
+      current.lastError = code === 0 ? "" : `exit code ${code ?? "null"}, signal ${signal ?? "null"}`;
+    }
+    const saved = devices.get(device.deviceKey);
+    if (saved) {
+      devices.set(device.deviceKey, { ...saved, status: "offline", connectionStatus: "stopped", lastError: current?.lastError || "" });
+      sendHeartbeat().catch((error) => writeLog("warn", "heartbeat after worker exit failed", { error: error.message }));
+    }
+    writeLog(code === 0 ? "info" : "error", "hikvision worker exited", { deviceKey: device.deviceKey, code, signal });
+  });
+
+  return {
+    ...device,
+    sdk: { ...device.sdk, password: "******" },
+    status: "online",
+    connectionStatus: "worker-started",
+    connectedAt: new Date().toISOString()
+  };
+}
+
+function stopWorker(deviceKey) {
+  const worker = workers.get(deviceKey);
+  if (!worker) return;
+  worker.process.kill();
+  workers.delete(deviceKey);
+}
+
+function handleWorkerOutput(device, chunk) {
+  for (const line of String(chunk).split(/\r?\n/).filter(Boolean)) {
+    let entry = null;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      writeLog("info", "hikvision worker output", { deviceKey: device.deviceKey, line });
+      continue;
+    }
+    if (entry.message === "login succeeded" || entry.message === "alarm armed" || entry.message === "heartbeat sent") {
+      const worker = workers.get(device.deviceKey);
+      if (worker) worker.status = "running";
+    }
+    if (entry.message === "heartbeat sent") continue;
+    writeLog(entry.level || "info", entry.message || "hikvision worker output", { deviceKey: device.deviceKey, ...entry });
+  }
+}
+
+function handleWorkerError(device, chunk) {
+  const text = String(chunk).trim();
+  if (!text) return;
+  const worker = workers.get(device.deviceKey);
+  if (worker) {
+    worker.status = "error";
+    worker.lastError = text;
+  }
+  writeLog("error", "hikvision worker error", { deviceKey: device.deviceKey, error: text });
+}
+
 async function sendHeartbeat() {
   if (!gatewayUrl) return;
   const heartbeat = {
     collectorId,
     version: "0.1.0",
-    adapter: "fake-http-collector",
+    adapter: adapterName(),
+    mode: adapterMode,
     host: `localhost:${port}`,
     devices: Array.from(devices.values()).map((device) => ({
       deviceKey: device.deviceKey,
       ipAddress: device.ipAddress,
       macAddress: device.macAddress,
-      status: device.status
+      status: device.status,
+      connectionStatus: device.connectionStatus,
+      lastError: device.lastError || workers.get(device.deviceKey)?.lastError || "",
+      worker: workers.get(device.deviceKey) ? {
+        status: workers.get(device.deviceKey).status,
+        lastError: workers.get(device.deviceKey).lastError
+      } : undefined
     }))
   };
   await postJson(`${gatewayUrl}/api/collector/heartbeat`, heartbeat);
@@ -159,13 +308,14 @@ function publicState() {
   return {
     collectorId,
     version: "0.1.0",
-    adapter: "fake-http-collector",
+    adapter: adapterName(),
+    mode: adapterMode,
     gatewayUrl,
     port,
     lastHeartbeatAt,
     lastEventAt,
     eventCount,
-    devices: Array.from(devices.values())
+    devices: Array.from(devices.values()).map(publicDevice)
   };
 }
 
@@ -183,9 +333,10 @@ async function postJson(url, body) {
 }
 
 function writeLog(level, message, meta = {}) {
+  if (message === "heartbeat sent") return;
   const entry = { time: new Date().toISOString(), level, message, meta };
   logs.unshift(entry);
-  logs.splice(200);
+  logs.splice(500);
   const line = `[${entry.time}] ${level.toUpperCase()} ${message}`;
   if (level === "error") {
     console.error(line, meta);
@@ -334,7 +485,7 @@ function collectorStatusHtml(req) {
       return '<article class="log ' + esc(level) + '"><div class="log-main"><span class="level ' + esc(level) + '">' + esc(formatLevel(level)) + '</span><strong>' + esc(translateMessage(log.message)) + '</strong><time>' + esc(formatTime(log.time)) + '</time></div>' + (tags ? '<div class="tags">' + tags + '</div>' : '') + (details !== '{}' ? '<details><summary>查看详情</summary><pre>' + esc(details) + '</pre></details>' : '') + '</article>';
     }
     function buildTags(meta) {
-      const pairs = [["deviceKey","设备"],["ipAddress","IP"],["role","角色"],["sdkPort","SDK端口"],["deviceCount","设备数"],["enter","进店"],["exit","出店"],["duplicatePeople","重复"],["port","端口"],["gatewayUrl","Gateway"],["url","地址"],["status","状态"]];
+      const pairs = [["deviceKey","设备"],["ipAddress","IP"],["role","角色"],["sdkPort","SDK端口"],["commandName","SDK"],["command","指令"],["eventType","事件"],["eventDescription","描述"],["eventState","状态"],["dataType","数据"],["dataLen","长度"],["pictures","图片"],["channelId","通道"],["savedTo","保存"],["deviceCount","设备数"],["enter","进入"],["exit","离开"],["passing","经过"],["duplicatePeople","重复"],["port","端口"],["gatewayUrl","Gateway"],["url","地址"],["status","状态"]];
       return pairs.filter(pair => meta[pair[0]] !== undefined && meta[pair[0]] !== "").map(pair => '<span class="tag"><small>' + esc(pair[1]) + '</small>' + esc(formatMeta(pair[0], meta[pair[0]])) + '</span>').join("");
     }
     function formatMeta(key, value) {
@@ -350,7 +501,11 @@ function collectorStatusHtml(req) {
         "camera connection failed": "摄像头连接失败",
         "camera connection succeeded": "摄像头连接成功",
         "device registered": "摄像头已注册到采集器",
-        "heartbeat sent": "心跳已上报",
+        "sdk isapi packet": "SDK ISAPI 报文",
+        "sdk pdc packet": "SDK PDC 报文",
+        "sdk alarm packet": "SDK 报警报文",
+        "empty isapi alarm": "SDK ISAPI 空报文",
+        "pdc event posted": "客流事件已上报",
         "event sent": "客流事件已上报",
         "post failed": "上报请求失败"
       };

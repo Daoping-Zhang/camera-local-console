@@ -1,0 +1,9 @@
+{
+  "version": "0.1.1",
+  "channel": "beta",
+  "platform": "win-x64",
+  "url": "http://www.fenqunshuju.com/releases/camera-local-console/packages/win-x64/camera-local-console-win-x64-0.1.1.zip",
+  "sha256": "replace-with-package-sha256",
+  "required": false,
+  "notes": "Beta release for selected client sites."
+}

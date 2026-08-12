@@ -1,81 +1,98 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Camera Local Console</title>
+  <title>鎽勫儚澶存湰鍦版帶鍒跺彴</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
   <header class="topbar">
     <div>
-      <h1>Camera Local Console</h1>
-      <p>本地摄像头发现、注册、测试上报控制台</p>
+      <h1>鎽勫儚澶存湰鍦版帶鍒跺彴</h1>
+      <p>鏈湴鍙戠幇鎽勫儚澶淬€佽繛鎺ラ噰闆嗗櫒銆佹帴鏀?SDK 浜嬩欢骞惰浆鍙戝埌 hik-contact-data銆?/p>
     </div>
     <div class="top-actions">
-      <span id="modeBadge" class="status-badge muted">未连接</span>
-      <button id="refreshBtn">刷新</button>
+      <span id="modeBadge" class="status-badge muted">鏈厤缃?/span>
+      <button id="refreshBtn">鍒锋柊</button>
     </div>
   </header>
 
   <main class="layout">
     <nav class="page-tabs wide">
-      <button class="tab active" data-page="page-register">注册流程</button>
-      <button class="tab" data-page="page-collectors">收集器</button>
-      <button class="tab" data-page="page-server">Server 状态</button>
-      <button class="tab" data-page="page-logs">日志</button>
+      <button class="tab active" data-page="page-register">娉ㄥ唽娴佺▼</button>
+      <button class="tab" data-page="page-collectors">閲囬泦鍣?/button>
+      <button class="tab" data-page="page-server">鏁版嵁鎺ュ彛</button>
+      <button class="tab" data-page="page-release">Release</button>
+      <button class="tab" data-page="page-logs">鏃ュ織</button>
     </nav>
 
     <section class="status-strip wide">
       <div class="metric">
-        <span>Gateway</span>
+        <span>hik-contact-data</span>
         <strong id="gatewayMetric">-</strong>
       </div>
       <div class="metric">
-        <span>采集器</span>
+        <span>閲囬泦鍣?/span>
         <strong id="collectorMetric">-</strong>
       </div>
       <div class="metric">
-        <span>最近事件</span>
+        <span>鏈€杩戜簨浠?/span>
         <strong id="eventMetric">-</strong>
       </div>
       <div class="metric">
-        <span>当前门店</span>
+        <span>褰撳墠闂ㄥ簵</span>
         <strong id="shopMetric">-</strong>
       </div>
     </section>
 
     <section class="panel page page-server" hidden>
-      <h2>服务器连接</h2>
+      <h2>hik-contact-data</h2>
       <div class="grid">
-        <label>Server URL<input id="serverUrl" placeholder="http://localhost:18091"></label>
-        <label>登录路径<input id="loginPath" placeholder="/user/login"></label>
-        <label>账号<input id="username" autocomplete="username"></label>
-        <label>密码<input id="password" type="password" autocomplete="current-password"></label>
+        <label>鎺ュ彛鍦板潃<input id="legacyHikBaseUrl" placeholder="http://127.0.0.1:31001"></label>
       </div>
       <div class="actions">
-        <button id="connectBtn">登录测试</button>
-        <button id="debugModeBtn" class="secondary">启用本地调试</button>
+        <button id="connectLegacyHikBtn">杩炴帴 hik-contact-data</button>
       </div>
-      <p id="serverState" class="hint"></p>
+      <p id="legacyHikState" class="hint"></p>
+    </section>
+
+    <section class="panel wide page page-release" hidden>
+      <div class="section-head">
+        <div>
+          <h2>Release</h2>
+          <p class="hint">Configure update channel and check the remote release manifest.</p>
+        </div>
+        <button id="checkReleaseBtn" class="secondary">Check update</button>
+      </div>
+      <div class="compact-grid">
+        <label>Current version<input id="releaseVersion" readonly></label>
+        <label>Channel<select id="releaseChannel"><option value="stable">stable</option><option value="beta">beta</option><option value="canary">canary</option></select></label>
+        <label>Manifest URL<input id="releaseManifestUrl"></label>
+      </div>
+      <div class="actions">
+        <button id="saveReleaseBtn">Save release config</button>
+      </div>
+      <p id="releaseState" class="hint"></p>
+      <pre id="releaseManifest" class="json-preview"></pre>
     </section>
 
     <section class="panel wide page page-register wizard-panel">
       <div class="step-label">1</div>
       <div class="section-head">
         <div>
-          <h2>选择门店</h2>
-          <p class="hint">本地调试可直接使用测试门店；真实模式登录后加载门店。</p>
+          <h2>閫夋嫨闂ㄥ簵</h2>
+          <p class="hint">鏈湴璋冭瘯鍙洿鎺ヤ娇鐢ㄩ粯璁ら棬搴楋紝涔熷彲浠ユ墜鍔ㄥ～鍐欓棬搴椾俊鎭€?/p>
         </div>
       </div>
       <div class="compact-grid">
-        <label>选择店铺<select id="shopSelect"><option value="">登录后加载门店</option></select></label>
-        <label>Shop ID<input id="shopId" placeholder="已有门店 ID"></label>
-        <label>Shop Name<input id="shopName" placeholder="门店名称，可选"></label>
+        <label>閫夋嫨闂ㄥ簵<select id="shopSelect"><option value="">鏆傛棤闂ㄥ簵</option></select></label>
+        <label>闂ㄥ簵 ID<input id="shopId" placeholder="local-shop"></label>
+        <label>闂ㄥ簵鍚嶇О<input id="shopName" placeholder="Local Shop"></label>
       </div>
       <div class="actions">
-        <button id="loadShopsBtn">加载门店</button>
-        <button id="saveShopBtn">保存当前店铺</button>
+        <button id="loadShopsBtn">鍔犺浇闂ㄥ簵</button>
+        <button id="saveShopBtn">淇濆瓨褰撳墠闂ㄥ簵</button>
       </div>
     </section>
 
@@ -83,94 +100,94 @@
       <div class="step-label">2</div>
       <div class="section-head">
         <div>
-          <h2>连接收集器</h2>
-          <p class="hint">收集器只需启动并监听端口，控制台会主动连接它。</p>
+          <h2>杩炴帴閲囬泦鍣?/h2>
+          <p class="hint">閲囬泦鍣ㄧ洃鍚?3100锛屾帶鍒跺彴浼氶€氳繃瀹冭繛鎺ユ憚鍍忓ご SDK銆?/p>
         </div>
-        <button id="testCollectorBtn" class="secondary">测试连接</button>
+        <button id="testCollectorBtn" class="secondary">娴嬭瘯杩炴帴</button>
       </div>
       <div class="compact-grid">
-        <label>Collector URL<input id="downCollectorUrl" value="http://localhost:3100"></label>
-        <label>默认 SDK 端口<input id="collectorDefaultSdkPort" type="number" value="8000"></label>
+        <label>Collector URL<input id="downCollectorUrl" value="http://127.0.0.1:3100"></label>
+        <label>榛樿 SDK 绔彛<input id="collectorDefaultSdkPort" type="number" value="8000"></label>
       </div>
-      <p id="downCollectorState" class="hint">启动命令：npm run collector-server</p>
+      <p id="downCollectorState" class="hint">鍚姩鍛戒护锛歜ash scripts/start-real-collector.sh</p>
     </section>
 
     <section class="panel wide page page-register">
       <div class="step-label">3</div>
       <div class="section-head">
         <div>
-          <h2>扫描并注册摄像头</h2>
-          <p class="hint">扫到设备后，在设备卡片内补充信息并执行完整注册流程。</p>
+          <h2>鎵弿骞舵敞鍐屾憚鍍忓ご</h2>
+          <p class="hint">鎵弿鍒拌澶囧悗锛屽湪璁惧鍗＄墖鍐呰ˉ鍏呰处鍙蜂俊鎭苟娉ㄥ唽鍒伴噰闆嗗櫒銆?/p>
         </div>
       </div>
       <div class="scan-row">
-        <label>网段<input id="cidr" placeholder="192.168.1.0/24"></label>
-        <button id="scanBtn">开始扫描</button>
+        <label>缃戞<input id="cidr" placeholder="192.168.1.0/24"></label>
+        <button id="scanBtn">寮€濮嬫壂鎻?/button>
       </div>
       <div id="interfaces" class="chips"></div>
       <div id="scanResults" class="scan-results"></div>
     </section>
 
     <section class="panel advanced-panel page page-register">
-      <h2>高级手动调试</h2>
+      <h2>楂樼骇鎵嬪姩璋冭瘯</h2>
       <div class="grid">
         <label>IP<input id="bindIp"></label>
         <label>MAC / Device Key<input id="bindMac"></label>
         <label>Device ID<input id="bindDeviceId"></label>
         <label>Device Name<input id="bindDeviceName"></label>
-        <label>角色<select id="bindType"><option value="0">店外 type=0</option><option value="1">店内 type=1</option></select></label>
+        <label>瑙掕壊<select id="bindType"><option value="0">搴楀 type=0</option><option value="1">搴楀唴 type=1</option></select></label>
       </div>
-      <button id="bindBtn" class="secondary">仅登记到 Gateway</button>
+      <button id="bindBtn" class="secondary">浠呮湰鍦拌褰曡澶?/button>
     </section>
 
     <section class="panel advanced-panel page page-register">
-      <h2>注册到采集器</h2>
+      <h2>娉ㄥ唽鍒伴噰闆嗗櫒</h2>
       <div class="grid">
-        <label>Collector URL<input id="manualCollectorUrl" value="http://localhost:3100"></label>
-        <label>SDK 端口<input id="sdkPort" type="number" value="8000"></label>
-        <label>摄像头账号<input id="cameraUsername" autocomplete="off" placeholder="admin"></label>
-        <label>摄像头密码<input id="cameraPassword" type="password" autocomplete="off"></label>
+        <label>Collector URL<input id="manualCollectorUrl" value="http://127.0.0.1:3100"></label>
+        <label>SDK 绔彛<input id="sdkPort" type="number" value="8000"></label>
+        <label>鎽勫儚澶磋处鍙?input id="cameraUsername" autocomplete="off" placeholder="admin"></label>
+        <label>鎽勫儚澶村瘑鐮?input id="cameraPassword" type="password" autocomplete="off"></label>
       </div>
       <div class="actions">
-        <button id="registerCollectorBtn">执行完整注册流程</button>
-        <button id="collectorTestEventBtn" class="secondary">触发测试事件</button>
+        <button id="registerCollectorBtn">鎵ц瀹屾暣娉ㄥ唽娴佺▼</button>
+        <button id="collectorTestEventBtn" class="secondary">瑙﹀彂娴嬭瘯浜嬩欢</button>
       </div>
-      <p id="manualCollectorState" class="hint">完整流程：先向下注册到采集器并连接摄像头，成功后再向上登记到 Gateway/远端服务器。</p>
+      <p id="manualCollectorState" class="hint">瀹屾暣娴佺▼锛氬厛鍚戜笅娉ㄥ唽鍒伴噰闆嗗櫒骞惰繛鎺ユ憚鍍忓ご锛涗簨浠跺埌杈惧悗鐢?3000 杞彂鍒?hik-contact-data銆?/p>
     </section>
 
     <section class="panel page page-register">
-      <h2>测试上报</h2>
+      <h2>娴嬭瘯涓婃姤</h2>
       <div class="grid">
-        <label>MAC<input id="testMac" placeholder="local-camera-001"></label>
-        <label>Enter<input id="testEnter" type="number" value="1"></label>
-        <label>Exit<input id="testExit" type="number" value="0"></label>
-        <label>Duplicate<input id="testDuplicate" type="number" value="0"></label>
+        <label>MAC<input id="testMac" placeholder="08:CC:81:C4:79:9E"></label>
+        <label>杩涘叆<input id="testEnter" type="number" value="1"></label>
+        <label>绂诲紑<input id="testExit" type="number" value="0"></label>
+        <label>閲嶅<input id="testDuplicate" type="number" value="0"></label>
       </div>
-      <button id="testEventBtn">发送测试客流事件</button>
+      <button id="testEventBtn">鍙戦€佹祴璇曞娴佷簨浠?/button>
     </section>
 
     <section class="panel wide page page-collectors" hidden>
       <div class="section-head">
         <div>
-          <h2>采集器</h2>
-          <p class="hint">可访问表示端口已通；在线表示已完成初始化并向 Gateway 心跳。</p>
+          <h2>閲囬泦鍣?/h2>
+          <p class="hint">鍙闂〃绀虹鍙ｅ凡閫氾紱鍦ㄧ嚎琛ㄧず宸插畬鎴愬垵濮嬪寲骞跺悜 3000 鍙戦€佸績璺炽€?/p>
         </div>
-        <button id="refreshCollectorsBtn" class="secondary">刷新状态</button>
+        <button id="refreshCollectorsBtn" class="secondary">鍒锋柊鐘舵€?/button>
       </div>
       <div class="grid">
-        <label>事件上报地址<input id="collectorEventUrl" readonly></label>
-        <label>心跳上报地址<input id="collectorHeartbeatUrl" readonly></label>
+        <label>浜嬩欢涓婃姤鍦板潃<input id="collectorEventUrl" readonly></label>
+        <label>蹇冭烦涓婃姤鍦板潃<input id="collectorHeartbeatUrl" readonly></label>
       </div>
       <div id="collectors" class="collector-grid"></div>
     </section>
 
     <section class="panel wide page page-collectors" hidden>
-      <h2>最近事件</h2>
+      <h2>鏈€杩戜簨浠?/h2>
       <div id="events" class="event-list"></div>
     </section>
 
     <section class="panel wide page page-logs" hidden>
-      <h2>日志</h2>
+      <h2>鏃ュ織</h2>
       <div id="logs" class="log-list"></div>
     </section>
   </main>

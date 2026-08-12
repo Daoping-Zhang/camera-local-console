@@ -62,6 +62,11 @@ h2 {
   color: var(--muted);
 }
 
+.error-text {
+  color: #b42318;
+  font-weight: 700;
+}
+
 .top-actions,
 .actions,
 .section-head {
@@ -778,4 +783,15 @@ a {
     padding-left: 16px;
     padding-top: 56px;
   }
+}
+
+.json-preview {
+  background: #0f172a;
+  color: #dbeafe;
+  border-radius: 8px;
+  padding: 14px;
+  overflow: auto;
+  max-height: 360px;
+  font-size: 12px;
+  line-height: 1.5;
 }

@@ -1,0 +1,10 @@
+services:
+  console:
+    network_mode: bridge
+    ports:
+      - "3000:3000"
+
+  collector:
+    network_mode: bridge
+    ports:
+      - "3100:3100"

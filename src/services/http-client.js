@@ -21,6 +21,35 @@ export async function postJson(url, body, headers = {}) {
   };
 }
 
+export async function postForm(url, body, headers = {}) {
+  const form = new URLSearchParams();
+  for (const [key, value] of Object.entries(body || {})) {
+    if (value !== undefined && value !== null) {
+      form.set(key, String(value));
+    }
+  }
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      ...headers
+    },
+    body: form
+  });
+  const text = await response.text();
+  let data = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = { raw: text };
+  }
+  return {
+    ok: response.ok,
+    status: response.status,
+    data
+  };
+}
+
 export async function getJson(url, headers = {}) {
   const response = await fetch(url, { headers });
   const text = await response.text();

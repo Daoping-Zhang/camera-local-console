@@ -4,10 +4,17 @@ let state = null;
 let shops = [];
 let collectors = [];
 let latestEvents = [];
+let scanResults = [];
 
-document.querySelectorAll(".tab").forEach((tab) => {
-  tab.onclick = () => showPage(tab.dataset.page);
-});
+function setText(id, value) {
+  const element = $(id);
+  if (element) element.textContent = value;
+}
+
+function setValue(id, value) {
+  const element = $(id);
+  if (element) element.value = value;
+}
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -15,507 +22,50 @@ async function api(path, options = {}) {
     ...options
   });
   const data = await response.json();
-  if (!response.ok || data.ok === false) {
-    throw new Error(data.error || data.message || "request failed");
-  }
+  if (!response.ok || data.ok === false) throw new Error(data.error || data.message || "request failed");
   return data;
 }
 
-async function refresh() {
-  const data = await api("/api/state");
-  state = data.state;
-  latestEvents = data.events || [];
-  $("serverUrl").value = state.server.baseUrl || "";
-  $("loginPath").value = state.server.loginPath || "/user/login";
-  $("shopId").value = state.shop.shopId || "";
-  $("shopName").value = state.shop.shopName || "";
-  $("debugModeBtn").textContent = state.server.localDebug ? "退出本地调试" : "启用本地调试";
-  $("serverState").textContent = serverStatusText();
-  renderModeBadge();
-  renderShopSelect();
-  $("interfaces").innerHTML = data.interfaces.map((iface) =>
-    `<button class="chip" data-cidr="${iface.cidr}">${iface.name} ${iface.cidr}</button>`
-  ).join("");
-  document.querySelectorAll(".chip").forEach((chip) => {
-    chip.onclick = () => $("cidr").value = chip.dataset.cidr;
-  });
-  renderEvents(latestEvents);
-  renderCollectorUrls();
-  await refreshCollectors();
-  renderMetrics();
-  await refreshLogs();
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
 }
 
-async function refreshLogs() {
-  const data = await api("/api/logs");
-  $("logs").innerHTML = data.logs.map(renderLogItem).join("") || `<div class="empty-state">暂无日志</div>`;
+function normalizeDeviceIndexCode(value) {
+  return String(value || "").trim().toLowerCase().replaceAll(":", "").replaceAll("-", "");
 }
 
-function renderEvents(events) {
-  $("events").innerHTML = events.map((entry) => {
-    const alert = entry.payload.EventNotificationAlert;
-    const count = alert.peopleCounting;
-    const ok = entry.response?.ok && entry.response?.data?.code === 200;
-    return `<div class="event-card">
-      <div class="event-main">
-        <span class="status-badge ${ok ? "online" : "error"}">${ok ? "成功" : "失败"}</span>
-        <strong>${escapeHtml(alert.macAddress)}</strong>
-        <span>${escapeHtml(formatTime(entry.time))}</span>
-      </div>
-      <div class="event-counts">
-        <span>进店 <strong>${escapeHtml(count.enter)}</strong></span>
-        <span>出店 <strong>${escapeHtml(count.exit)}</strong></span>
-        <span>重复 <strong>${escapeHtml(count.duplicatePeople)}</strong></span>
-      </div>
-      <div class="event-response">${escapeHtml(entry.response?.data?.message || JSON.stringify(entry.response?.data || entry.response))}</div>
-    </div>`;
-  }).join("") || `<div class="empty-state">暂无事件</div>`;
+function defaultCameraWebUrl(device) {
+  if (device.webUrl) return device.webUrl;
+  if (!device.ipAddress) return "about:blank";
+  const ports = Array.isArray(device.openPorts) ? device.openPorts : [];
+  if (ports.includes(443)) return `https://${device.ipAddress}`;
+  return `http://${device.ipAddress}`;
 }
 
-async function refreshCollectors() {
-  const data = await api("/api/collectors");
-  collectors = data.collectors || [];
-  $("collectors").innerHTML = collectors.map(renderCollectorCard).join("") || `<div class="empty-state">暂无已发现采集器。请先在注册流程里测试 Collector URL。</div>`;
-  renderMetrics();
+function formatTime(value) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString();
 }
 
-function renderCollectorCard(collector) {
-  const status = collector.status || "unknown";
-  const statusText = status === "online" ? "在线" : status === "reachable" ? "可访问" : status === "stale" ? "心跳过期" : "未知";
-  const devices = collector.devices || [];
-  return `<article class="collector-card ${escapeHtml(status)}">
-    <div class="collector-head">
-      <div>
-        <div class="collector-title">${escapeHtml(collector.collectorId)}</div>
-        <div class="collector-sub">${escapeHtml(collector.adapter || "-")} · v${escapeHtml(collector.version || "-")} · ${escapeHtml(collector.host || "-")}</div>
-      </div>
-      <span class="status-badge ${escapeHtml(status)}">${statusText}</span>
-    </div>
-    <div class="collector-times">
-      <div><span>最近心跳</span><strong>${escapeHtml(formatRelative(collector.lastHeartbeatAt))}</strong><small>${escapeHtml(formatTime(collector.lastHeartbeatAt))}</small></div>
-      <div><span>最近事件</span><strong>${escapeHtml(formatRelative(collector.lastEventAt))}</strong><small>${escapeHtml(formatTime(collector.lastEventAt))}</small></div>
-    </div>
-    <div class="device-list">
-      ${devices.map(renderCollectorDevice).join("") || `<div class="device-row muted-row">暂无设备</div>`}
-    </div>
-  </article>`;
+function formatRelative(value) {
+  if (!value) return "-";
+  const delta = Date.now() - new Date(value).getTime();
+  if (Number.isNaN(delta)) return "-";
+  if (delta < 60000) return "just now";
+  if (delta < 3600000) return `${Math.floor(delta / 60000)} min ago`;
+  return `${Math.floor(delta / 3600000)} h ago`;
 }
 
-function renderCollectorDevice(device) {
-  return `<div class="device-row">
-    <span class="dot ${escapeHtml(device.status || "unknown")}"></span>
-    <strong>${escapeHtml(device.deviceKey || device.macAddress || device.ipAddress || "-")}</strong>
-    <span>${escapeHtml(device.ipAddress || "-")}</span>
-    <span>${escapeHtml(device.macAddress || "-")}</span>
-  </div>`;
-}
-
-function renderLogItem(log) {
-  const level = log.level || "info";
-  const levelText = level === "error" ? "错误" : level === "warn" ? "警告" : "信息";
-  const meta = log.meta || {};
-  const tags = buildLogTags(meta);
-  const details = JSON.stringify(meta, null, 2);
-  return `<article class="log-item ${escapeHtml(level)}">
-    <div class="log-main">
-      <span class="log-level ${escapeHtml(level)}">${levelText}</span>
-      <strong>${escapeHtml(translateLogMessage(log.message))}</strong>
-      <time>${escapeHtml(formatTime(log.time))}</time>
-    </div>
-    ${tags.length ? `<div class="log-tags">${tags.join("")}</div>` : ""}
-    ${details !== "{}" ? `<details class="log-details"><summary>查看详情</summary><pre>${escapeHtml(details)}</pre></details>` : ""}
-  </article>`;
-}
-
-function buildLogTags(meta) {
-  const tagMap = [
-    ["collectorId", "采集器"],
-    ["shopId", "门店"],
-    ["shopName", "门店名"],
-    ["macAddress", "MAC"],
-    ["deviceKey", "设备"],
-    ["ipAddress", "IP"],
-    ["cidr", "网段"],
-    ["count", "数量"],
-    ["deviceCount", "设备数"],
-    ["type", "角色"],
-    ["enter", "进店"],
-    ["exit", "出店"],
-    ["enabled", "本地调试"]
-  ];
-  return tagMap
-    .filter(([key]) => meta[key] !== undefined && meta[key] !== "")
-    .map(([key, label]) => `<span class="log-tag"><small>${label}</small>${escapeHtml(formatLogValue(key, meta[key]))}</span>`);
-}
-
-function formatLogValue(key, value) {
-  if (key === "type") return Number(value) === 1 ? "店内" : "店外";
-  if (key === "enabled") return value ? "开启" : "关闭";
-  return value;
-}
-
-function translateLogMessage(message) {
-  const messages = {
-    "local console started": "本地控制台已启动",
-    "local debug mode changed": "本地调试模式已切换",
-    "shop saved": "门店信息已保存",
-    "scan started": "开始扫描摄像头",
-    "scan finished": "扫描完成",
-    "device bound": "摄像头已登记到 Gateway",
-    "device registration flow started": "开始完整注册流程",
-    "device registration flow finished": "完整注册流程完成",
-    "collector heartbeat received": "收到采集器心跳",
-    "collector event reported": "客流事件已上报",
-    "collector event report failed": "客流事件上报失败",
-    "collector server started": "采集器服务已启动",
-    "collector device registered": "采集器已注册摄像头",
-    "collector test event sent": "采集器测试事件已发送",
-    "collector has no registered device": "采集器暂无已注册摄像头"
-  };
-  return messages[message] || message || "未知日志";
-}
-
-$("connectBtn").onclick = async () => {
-  try {
-    const data = await api("/api/server/connect", {
-      method: "POST",
-      body: JSON.stringify({
-        baseUrl: $("serverUrl").value,
-        loginPath: $("loginPath").value,
-        username: $("username").value,
-        password: $("password").value
-      })
-    });
-    state = data.state;
-    $("serverState").textContent = "登录成功";
-    await loadShops();
-    await refresh();
-  } catch (error) {
-    $("serverState").textContent = `登录失败：${error.message}`;
-  }
-};
-
-$("debugModeBtn").onclick = async () => {
-  const enabled = !state?.server?.localDebug;
-  const data = await api("/api/debug-mode", {
-    method: "POST",
-    body: JSON.stringify({ enabled })
-  });
-  state = data.state;
-  shops = data.shops || [];
-  renderShopSelect();
-  if (shops.length && !$("shopSelect").value) {
-    $("shopSelect").value = String(shops[0].id);
-    $("shopSelect").dispatchEvent(new Event("change"));
-  }
-  await refresh();
-};
-
-$("loadShopsBtn").onclick = async () => {
-  await loadShops();
-};
-
-$("refreshCollectorsBtn").onclick = async () => {
-  await refreshCollectors();
-};
-
-$("saveShopBtn").onclick = async () => {
-  await api("/api/shop/save", {
-    method: "POST",
-    body: JSON.stringify({ shopId: $("shopId").value, shopName: $("shopName").value })
-  });
-  await refresh();
-};
-
-$("shopSelect").onchange = () => {
-  const selected = shops.find((shop) => String(shop.id) === $("shopSelect").value);
-  if (!selected) return;
-  $("shopId").value = selected.id;
-  $("shopName").value = selected.name || "";
-};
-
-$("scanBtn").onclick = async () => {
-  $("scanResults").innerHTML = `<div class="empty-state">扫描中...</div>`;
-  try {
-    const data = await api("/api/scan", {
-      method: "POST",
-      body: JSON.stringify({ cidr: $("cidr").value })
-    });
-    $("scanResults").innerHTML = data.devices.map(renderScanDeviceCard).join("") || `<div class="empty-state">未发现疑似设备</div>`;
-  } catch (error) {
-    $("scanResults").innerHTML = `<div class="empty-state">扫描失败：${escapeHtml(error.message)}</div>`;
-  }
-};
-
-$("scanResults").onclick = (event) => {
-  const button = event.target.closest("button");
-  if (!button) return;
-  if (button.dataset.action === "fill") {
-    fillDevice(button.dataset.ip);
-    return;
-  }
-  if (button.dataset.action === "quick-register") {
-    registerScannedDevice(button.closest(".scan-card"));
-  }
-};
-
-$("bindBtn").onclick = async () => {
-  await bindDevice();
-};
-
-$("testCollectorBtn").onclick = async () => {
-  try {
-    const data = await api("/api/collector-proxy/health", {
-      method: "POST",
-      body: JSON.stringify({ collectorUrl: $("downCollectorUrl").value })
-    });
-    $("downCollectorState").textContent = `采集器可访问：${data.result.collector.collectorId}。注册摄像头后会开始心跳上报。`;
-    await refreshCollectors();
-  } catch (error) {
-    $("downCollectorState").textContent = `采集器连接失败：${error.message}`;
-  }
-};
-
-$("registerCollectorBtn").onclick = async () => {
-  try {
-    $("manualCollectorState").innerHTML = renderFlowSteps([
-      { name: "collector-register", status: "running" },
-      { name: state?.server?.localDebug ? "gateway-local-bind" : "remote-device-bind", status: "pending" }
-    ]);
-    const data = await api("/api/devices/register-flow", {
-      method: "POST",
-      body: JSON.stringify({
-        collectorUrl: $("manualCollectorUrl").value,
-        device: buildCollectorDeviceConfig()
-      })
-    });
-    $("manualCollectorState").innerHTML = renderFlowSteps(data.steps || []);
-    await refreshCollectors();
-    await refresh();
-  } catch (error) {
-    $("manualCollectorState").innerHTML = `<span class="status-badge error">失败</span> ${escapeHtml(error.message)}`;
-  }
-};
-
-$("collectorTestEventBtn").onclick = async () => {
-  try {
-    const data = await api("/api/collector-proxy/test-event", {
-      method: "POST",
-      body: JSON.stringify({
-        collectorUrl: $("manualCollectorUrl").value,
-        deviceKey: $("bindDeviceId").value || $("bindMac").value || $("bindIp").value
-      })
-    });
-    $("manualCollectorState").textContent = data.result.event ? "采集器测试事件已触发" : "采集器暂无可触发设备";
-    await refresh();
-  } catch (error) {
-    $("manualCollectorState").textContent = `触发失败：${error.message}`;
-  }
-};
-
-$("testEventBtn").onclick = async () => {
-  await api("/api/test-event", {
-    method: "POST",
-    body: JSON.stringify({
-      macAddress: $("testMac").value,
-      enter: Number($("testEnter").value),
-      exit: Number($("testExit").value),
-      duplicatePeople: Number($("testDuplicate").value)
-    })
-  });
-  await refresh();
-};
-
-function fillDevice(ipAddress) {
-  $("bindIp").value = ipAddress;
-  const card = document.querySelector(`.scan-card[data-ip="${CSS.escape(ipAddress)}"]`);
-  const deviceKey = card?.querySelector('[data-field="deviceKey"]')?.value || "";
-  $("bindMac").value = deviceKey;
-  $("bindDeviceId").value = deviceKey || ipAddress;
-  $("bindDeviceName").value = `Camera ${ipAddress}`;
-  $("testMac").value = $("bindMac").value;
-}
-
-function renderScanDeviceCard(device) {
-  const ip = escapeHtml(device.ipAddress);
-  const mac = device.macAddress || "";
-  const deviceKey = escapeHtml(mac);
-  const macHint = mac ? `MAC ${escapeHtml(mac)}` : "未从 ARP 获取到 MAC，请手动填写 Device Key";
-  return `<article class="scan-card" data-ip="${ip}">
-    <div class="scan-card-head">
-      <div>
-        <div class="scan-title">${ip}</div>
-        <div class="scan-meta">端口 ${escapeHtml(device.openPorts.join(", ") || "-")} · 可信度 ${escapeHtml(device.confidence)} · ${macHint}</div>
-      </div>
-      <div class="actions">
-        ${device.webUrl ? `<a class="link-button" href="${escapeHtml(device.webUrl)}" target="_blank" rel="noreferrer">打开后台</a>` : ""}
-        <button class="secondary" data-action="fill" data-ip="${ip}">填到手动区</button>
-      </div>
-    </div>
-    <div class="scan-register-grid">
-      <label>角色<select data-field="type"><option value="0">店外 type=0</option><option value="1">店内 type=1</option></select></label>
-      <label>Device Key / MAC<input data-field="deviceKey" value="${deviceKey}" placeholder="未获取到 MAC，请填 MAC 或设备唯一 ID"></label>
-      <label>设备名称<input data-field="deviceName" value="Camera ${ip}"></label>
-      <label>Collector URL<input data-field="collectorUrl" value="${escapeHtml($("downCollectorUrl").value || "http://localhost:3100")}"></label>
-      <label>SDK 端口<input data-field="sdkPort" type="number" value="${escapeHtml(device.sdkPort || $("collectorDefaultSdkPort").value || 8000)}"></label>
-      <label>摄像头账号<input data-field="cameraUsername" placeholder="admin" autocomplete="off"></label>
-      <label>摄像头密码<input data-field="cameraPassword" type="password" autocomplete="off"></label>
-    </div>
-    <div class="scan-card-foot">
-      <button data-action="quick-register">执行完整注册流程</button>
-      <div class="scan-flow hint" data-role="flow">先向下注册到采集器，连接成功后再向上登记。</div>
-    </div>
-  </article>`;
-}
-
-async function registerScannedDevice(card) {
-  const flow = card.querySelector('[data-role="flow"]');
-  try {
-    const get = (field) => card.querySelector(`[data-field="${field}"]`)?.value || "";
-    const type = Number(get("type"));
-    if (!get("deviceKey")) {
-      throw new Error("未获取到 MAC，请先填写 Device Key / MAC");
-    }
-    flow.innerHTML = renderFlowSteps([
-      { name: "collector-register", status: "running" },
-      { name: state?.server?.localDebug ? "gateway-local-bind" : "remote-device-bind", status: "pending" }
-    ]);
-    const data = await api("/api/devices/register-flow", {
-      method: "POST",
-      body: JSON.stringify({
-        collectorUrl: get("collectorUrl"),
-        device: {
-          gatewayUrl: window.location.origin,
-          shopId: $("shopId").value,
-          shopName: $("shopName").value,
-          deviceKey: get("deviceKey"),
-          deviceName: get("deviceName") || `Camera ${card.dataset.ip}`,
-          ipAddress: card.dataset.ip,
-          macAddress: get("deviceKey"),
-          role: type === 1 ? "inside" : "outside",
-          type,
-          sdk: {
-            vendor: "hikvision",
-            port: Number(get("sdkPort") || 8000),
-            username: get("cameraUsername"),
-            password: get("cameraPassword")
-          }
-        }
-      })
-    });
-    flow.innerHTML = renderFlowSteps(data.steps || []);
-    fillDevice(card.dataset.ip);
-    $("bindType").value = String(type);
-    await refreshCollectors();
-    await refresh();
-  } catch (error) {
-    flow.innerHTML = `<span class="status-badge error">失败</span> ${escapeHtml(error.message)}`;
-  }
-}
-
-async function loadShops() {
-  const data = await api("/api/shops");
-  shops = data.shops || [];
-  renderShopSelect();
-  if (shops.length === 1 && !$("shopId").value) {
-    $("shopSelect").value = String(shops[0].id);
-    $("shopSelect").dispatchEvent(new Event("change"));
-  }
-}
-
-function renderShopSelect() {
-  const currentShopId = String($("shopId").value || state?.shop?.shopId || "");
-  $("shopSelect").innerHTML = [
-    `<option value="">${shops.length ? "请选择门店" : "登录后加载门店"}</option>`,
-    ...shops.map((shop) => `<option value="${escapeHtml(shop.id)}">${escapeHtml(shop.name || "(未命名门店)")} #${escapeHtml(shop.id)}</option>`)
-  ].join("");
-  if (currentShopId && shops.some((shop) => String(shop.id) === currentShopId)) {
-    $("shopSelect").value = currentShopId;
-  }
-}
-
-function renderCollectorUrls() {
-  const origin = window.location.origin;
-  $("collectorEventUrl").value = `${origin}/api/collector/events`;
-  $("collectorHeartbeatUrl").value = `${origin}/api/collector/heartbeat`;
-}
-
-function renderModeBadge() {
-  $("modeBadge").className = `status-badge ${state.server.localDebug ? "debug" : state.server.token ? "online" : "muted"}`;
-  $("modeBadge").textContent = state.server.localDebug ? "本地调试" : state.server.token ? "远端已登录" : "远端未登录";
-}
-
-function renderMetrics() {
-  if (!state) return;
-  const onlineCount = collectors.filter((collector) => collector.status === "online").length;
-  const reachableCount = collectors.filter((collector) => collector.status === "reachable").length;
-  const staleCount = collectors.filter((collector) => collector.status === "stale").length;
-  const lastEvent = latestEvents[0];
-  const eventText = lastEvent ? `${formatRelative(lastEvent.time)} · ${lastEvent.payload.EventNotificationAlert.macAddress}` : "暂无";
-  $("gatewayMetric").textContent = state.server.localDebug ? "本地调试" : state.server.token ? "远端已登录" : "待登录";
-  $("collectorMetric").textContent = `${onlineCount} 在线 / ${reachableCount} 可访问 / ${staleCount} 过期`;
-  $("eventMetric").textContent = eventText;
-  $("shopMetric").textContent = state.shop.shopId ? `${state.shop.shopName || "未命名"} #${state.shop.shopId}` : "未选择";
-}
-
-function serverStatusText() {
-  if (state.server.localDebug) {
-    return `本地调试模式：设备绑定不写远端，上报仍发送到 ${state.server.baseUrl}${state.server.cameraDataPath}`;
-  }
-  return state.server.token ? `远端模式：已登录，Header: ${state.server.tokenHeader}` : "远端模式：未登录";
-}
-
-async function bindDevice() {
-  await api("/api/devices/bind", {
-    method: "POST",
-    body: JSON.stringify({
-      shopId: $("shopId").value,
-      shopName: $("shopName").value,
-      ipAddress: $("bindIp").value,
-      macAddress: $("bindMac").value,
-      deviceId: $("bindDeviceId").value,
-      deviceName: $("bindDeviceName").value,
-      type: Number($("bindType").value)
-    })
-  });
-  await refresh();
-}
-
-function buildCollectorDeviceConfig() {
-  const deviceKey = $("bindDeviceId").value || $("bindMac").value || $("bindIp").value;
-  if (!deviceKey) {
-    throw new Error("请先填入摄像头 IP/MAC/Device ID");
-  }
-  return {
-    gatewayUrl: window.location.origin,
-    shopId: $("shopId").value,
-    shopName: $("shopName").value,
-    deviceKey,
-    deviceName: $("bindDeviceName").value || `Camera ${deviceKey}`,
-    ipAddress: $("bindIp").value,
-    macAddress: $("bindMac").value || deviceKey,
-    role: Number($("bindType").value) === 1 ? "inside" : "outside",
-    type: Number($("bindType").value),
-    sdk: {
-      vendor: "hikvision",
-      port: Number($("sdkPort").value || 8000),
-      username: $("cameraUsername").value,
-      password: $("cameraPassword").value
-    }
-  };
-}
-
-function renderFlowSteps(steps) {
-  const names = {
-    "collector-register": "1. 向下注册到采集器并连接摄像头",
-    "gateway-local-bind": "2. 本地调试登记到 Gateway",
-    "remote-device-bind": "2. 向上注册到远端服务器"
-  };
-  return `<div class="flow-steps">${steps.map((step) => {
-    const statusClass = step.status === "success" ? "online" : step.status === "running" ? "warn" : step.status === "pending" ? "muted" : "error";
-    const statusText = step.status === "success" ? "完成" : step.status === "running" ? "进行中" : step.status === "pending" ? "等待" : "失败";
-    return `<div class="flow-step"><span class="status-badge ${statusClass}">${statusText}</span><strong>${escapeHtml(names[step.name] || step.name)}</strong></div>`;
-  }).join("")}</div>`;
+function showError(error) {
+  console.error(error);
+  alert(error.message || String(error));
 }
 
 function showPage(pageClass) {
@@ -525,29 +75,618 @@ function showPage(pageClass) {
   document.querySelectorAll(".page").forEach((page) => {
     page.hidden = !page.classList.contains(pageClass);
   });
+  if (pageClass === "page-logs") refreshLogs().catch(showError);
 }
 
-function escapeHtml(value) {
-  return String(value)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
+async function refresh() {
+  const data = await api("/api/state");
+  state = data.state;
+  latestEvents = data.events || [];
+  setValue("legacyHikBaseUrl", state.server.legacyHikBaseUrl || "");
+  setValue("shopId", state.shop.shopId || "");
+  setValue("shopName", state.shop.shopName || "");
+  renderModeBadge();
+  renderShopSelect();
+  renderInterfaces(data.interfaces || []);
+  renderScanResults(scanResults.length ? scanResults : state.devices || []);
+  renderCollectors(data.collectors || []);
+  renderEvents(latestEvents);
+  renderRelease(state.release || {});
+  renderMetrics();
 }
 
-function formatTime(value) {
-  return value ? new Date(value).toLocaleString() : "-";
+function renderModeBadge() {
+  const configured = Boolean(state?.server?.legacyHikBaseUrl);
+  const element = $("modeBadge");
+  if (!element) return;
+  element.textContent = configured ? "hik-contact-data" : "not configured";
+  element.className = `status-badge ${configured ? "online" : "muted"}`;
 }
 
-function formatRelative(value) {
-  if (!value) return "从未";
-  const delta = Date.now() - Date.parse(value);
-  if (!Number.isFinite(delta)) return "-";
-  if (delta < 5000) return "刚刚";
-  if (delta < 60000) return `${Math.floor(delta / 1000)} 秒前`;
-  if (delta < 3600000) return `${Math.floor(delta / 60000)} 分钟前`;
-  return `${Math.floor(delta / 3600000)} 小时前`;
+function renderMetrics() {
+  if (!state) return;
+  const onlineCount = collectors.filter((collector) => collector.status === "online").length;
+  const reachableCount = collectors.filter((collector) => collector.status === "reachable").length;
+  const staleCount = collectors.filter((collector) => collector.status === "stale").length;
+  const lastEvent = latestEvents[0];
+  const lastEventMac = lastEvent?.event?.macAddress || lastEvent?.payload?.EventNotificationAlert?.macAddress || "-";
+  setText("gatewayMetric", state.server.legacyHikBaseUrl || "not configured");
+  setText("shopMetric", state.shop.shopId ? `${state.shop.shopName || "Shop"} #${state.shop.shopId}` : "not selected");
+  setText("deviceMetric", `${state.devices?.length || 0} registered`);
+  setText("collectorMetric", `${collectors.length} total - ${onlineCount} online - ${reachableCount} reachable - ${staleCount} stale`);
+  setText("eventMetric", lastEvent ? `${formatRelative(lastEvent.time)} - ${lastEventMac}` : "none");
 }
 
-$("refreshBtn").onclick = refresh;
-refresh().catch(console.error);
+function renderRelease(release) {
+  setValue("releaseVersion", release.version || "-");
+  setValue("releaseChannel", release.channel || "stable");
+  setValue("releaseManifestUrl", release.manifestUrl || "");
+  const result = release.lastCheckResult;
+  if (!result) {
+    setText("releaseState", release.lastCheckAt ? `last check: ${formatTime(release.lastCheckAt)}` : "not checked");
+    setText("releaseManifest", "");
+    return;
+  }
+  const status = result.updateAvailable ? `update available: ${result.currentVersion} -> ${result.latestVersion}` : "already up to date";
+  setText("releaseState", `${status}; last check: ${formatTime(release.lastCheckAt)}`);
+  setText("releaseManifest", JSON.stringify(result.manifest || result, null, 2));
+}
+
+async function saveReleaseConfig() {
+  const channel = $("releaseChannel")?.value || "stable";
+  const manifestUrl = $("releaseManifestUrl")?.value || "";
+  const data = await api("/api/release/configure", {
+    method: "POST",
+    body: JSON.stringify({ channel, manifestUrl })
+  });
+  renderRelease(data.release || {});
+  await refresh();
+}
+
+async function checkRelease() {
+  const data = await api("/api/release/check", {
+    method: "POST",
+    body: JSON.stringify({ manifestUrl: $("releaseManifestUrl")?.value })
+  });
+  renderRelease(data.release || {});
+}
+
+function renderInterfaces(interfaces) {
+  const container = $("interfaces");
+  if (!container) return;
+  container.innerHTML = interfaces.map((iface) =>
+    `<button class="chip" data-cidr="${escapeHtml(iface.cidr)}">${escapeHtml(iface.name)} ${escapeHtml(iface.cidr)}</button>`
+  ).join("");
+  document.querySelectorAll(".chip").forEach((chip) => {
+    chip.onclick = () => setValue("cidr", chip.dataset.cidr);
+  });
+}
+
+function renderShopSelect() {
+  const select = $("shopSelect");
+  if (!select) return;
+  const currentShopId = String($("shopId")?.value || state?.shop?.shopId || "");
+  select.innerHTML = [
+    `<option value="">${shops.length ? "Select shop" : "No shops"}</option>`,
+    ...shops.map((shop) => `<option value="${escapeHtml(shop.id)}">${escapeHtml(shop.name || "Unnamed shop")} #${escapeHtml(shop.id)}</option>`)
+  ].join("");
+  if (currentShopId && shops.some((shop) => String(shop.id) === currentShopId)) select.value = currentShopId;
+}
+
+function selectShop() {
+  const shop = shops.find((item) => String(item.id) === $("shopSelect")?.value);
+  if (!shop) return;
+  setValue("shopId", shop.id);
+  setValue("shopName", shop.name || "");
+}
+
+async function loadShops() {
+  const data = await api("/api/shops");
+  shops = data.shops || [];
+  renderShopSelect();
+}
+
+async function saveShop() {
+  await api("/api/shop/save", {
+    method: "POST",
+    body: JSON.stringify({ shopId: $("shopId")?.value, shopName: $("shopName")?.value })
+  });
+  await refresh();
+}
+
+async function connectLegacyHik() {
+  try {
+    const data = await api("/api/legacy-hik/connect", {
+      method: "POST",
+      body: JSON.stringify({ baseUrl: $("legacyHikBaseUrl")?.value })
+    });
+    const endpoints = data.result?.endpoints || {};
+    const rcv = endpoints.eventRcv?.ok ? "eventRcv OK" : `eventRcv failed: ${endpoints.eventRcv?.message || "-"}`;
+    const rtbw = endpoints.eventRtbw?.ok ? "eventRtbw OK" : `eventRtbw failed: ${endpoints.eventRtbw?.message || "-"}`;
+    setText("legacyHikState", `${data.result?.reachable ? "connected" : "saved but probe failed"}: ${rcv}; ${rtbw}`);
+    await refresh();
+  } catch (error) {
+    setText("legacyHikState", `hik-contact-data failed: ${error.message}`);
+  }
+}
+
+async function scan() {
+  const data = await api("/api/scan", {
+    method: "POST",
+    body: JSON.stringify({ cidr: $("cidr")?.value })
+  });
+  scanResults = mergeScanResults(data.devices || []);
+  renderScanResults(scanResults);
+}
+
+function renderScanResults(devices) {
+  const container = $("scanResults");
+  if (!container) return;
+  container.innerHTML = devices.map((device) => {
+    const deviceIndexCode = normalizeDeviceIndexCode(device.deviceIndexCode || device.macAddress || device.deviceKey || device.ipAddress);
+    const bound = device.bound
+      ? `<span class="status-badge online">registered</span>`
+      : `<span class="status-badge muted">new</span>`;
+    return `<div class="device-card" data-device-index-code="${escapeHtml(deviceIndexCode)}">
+      <div class="device-title"><strong>${escapeHtml(device.ipAddress)}</strong>${bound}</div>
+      <p>MAC: ${escapeHtml(device.macAddress || "-")}</p>
+      <p>deviceIndexCode: ${escapeHtml(deviceIndexCode || "-")}</p>
+      <p>${escapeHtml(device.hostname || device.vendor || "")}</p>
+      <div class="inline-form">
+        <input placeholder="Device ID" value="${escapeHtml(device.deviceId || deviceIndexCode || "")}" data-field="deviceId">
+        <input placeholder="Device Name" value="${escapeHtml(device.deviceName || device.hostname || "")}" data-field="deviceName">
+        <input placeholder="Username" value="${escapeHtml(device.username || $("cameraUsername")?.value || "admin")}" data-field="username" autocomplete="off">
+        <input placeholder="Password" type="password" value="${escapeHtml(device.password || $("cameraPassword")?.value || "")}" data-field="password" autocomplete="off">
+        <input placeholder="SDK Port" type="number" value="${escapeHtml(device.sdkPort || $("sdkPort")?.value || $("collectorDefaultSdkPort")?.value || 8000)}" data-field="sdkPort">
+        <select data-field="type">
+          <option value="0" ${Number(device.type || 0) === 0 ? "selected" : ""}>outside</option>
+          <option value="1" ${Number(device.type || 0) === 1 ? "selected" : ""}>inside</option>
+        </select>
+        <button data-action="open-login" data-web-url="${escapeHtml(device.webUrl || defaultCameraWebUrl(device))}">open login</button>
+        <button data-action="register" data-ip="${escapeHtml(device.ipAddress)}" data-mac="${escapeHtml(device.macAddress || "")}" data-device-index-code="${escapeHtml(deviceIndexCode)}">bind and register</button>
+        <button data-action="delete" data-ip="${escapeHtml(device.ipAddress)}" data-mac="${escapeHtml(device.macAddress || "")}" data-device-index-code="${escapeHtml(deviceIndexCode)}">delete</button>
+      </div>
+      <p class="hint" data-role="scan-status">${escapeHtml(device.lastError || device.statusText || "")}</p>
+    </div>`;
+  }).join("") || `<div class="empty-state">No devices</div>`;
+  document.querySelectorAll(".device-card button").forEach((button) => {
+    button.onclick = () => {
+      if (button.dataset.action === "open-login") {
+        window.open(button.dataset.webUrl, "_blank", "noopener,noreferrer");
+        return;
+      }
+      if (button.dataset.action === "delete") {
+        deleteDevice(button).catch(showError);
+        return;
+      }
+      bindAndRegister(button).catch(showError);
+    };
+  });
+  document.querySelectorAll(".device-card [data-field]").forEach((input) => {
+    input.oninput = () => persistScanCardInput(input);
+    input.onchange = () => persistScanCardInput(input);
+  });
+}
+
+function mergeScanResults(devices) {
+  const previous = new Map(scanResults.map((device) => [
+    normalizeDeviceIndexCode(device.deviceIndexCode || device.macAddress || device.deviceKey || device.ipAddress),
+    device
+  ]));
+  return devices.map((device) => {
+    const key = normalizeDeviceIndexCode(device.deviceIndexCode || device.macAddress || device.deviceKey || device.ipAddress);
+    const old = previous.get(key) || {};
+    return {
+      ...device,
+      deviceId: old.deviceId || device.deviceId,
+      deviceName: old.deviceName || device.deviceName,
+      username: old.username || device.username,
+      password: old.password || device.password,
+      sdkPort: old.sdkPort || device.sdkPort,
+      type: old.type ?? device.type,
+      bound: old.bound || device.bound
+    };
+  });
+}
+
+function persistScanCardInput(input) {
+  const card = input.closest(".device-card");
+  const key = card?.dataset.deviceIndexCode;
+  const field = input.dataset.field;
+  if (!key || !field) return;
+  scanResults = scanResults.map((device) => {
+    const deviceKey = normalizeDeviceIndexCode(device.deviceIndexCode || device.macAddress || device.deviceKey || device.ipAddress);
+    if (deviceKey !== key) return device;
+    return { ...device, [field]: field === "type" ? Number(input.value) : input.value };
+  });
+}
+
+async function bindAndRegister(button) {
+  const card = button.closest(".device-card");
+  const read = (field) => card.querySelector(`[data-field="${field}"]`)?.value || "";
+  setScanCardStatus(button.dataset.deviceIndexCode, "registering...");
+  try {
+    await api("/api/devices/register-flow", {
+      method: "POST",
+      body: JSON.stringify({
+        collectorUrl: $("manualCollectorUrl")?.value || $("downCollectorUrl")?.value,
+        device: {
+          gatewayUrl: location.origin,
+          shopId: $("shopId")?.value,
+          shopName: $("shopName")?.value,
+          ipAddress: button.dataset.ip,
+          macAddress: button.dataset.mac,
+          deviceKey: button.dataset.deviceIndexCode || button.dataset.mac || button.dataset.ip,
+          deviceIndexCode: button.dataset.deviceIndexCode,
+          deviceId: read("deviceId") || button.dataset.deviceIndexCode,
+          deviceName: read("deviceName"),
+          type: Number(read("type")),
+          sdkPort: Number(read("sdkPort") || $("sdkPort")?.value || $("collectorDefaultSdkPort")?.value || 8000),
+          username: read("username") || $("cameraUsername")?.value,
+          password: read("password") || $("cameraPassword")?.value
+        }
+      })
+    });
+    scanResults = scanResults.map((device) => {
+      const key = normalizeDeviceIndexCode(device.macAddress || device.deviceKey || device.ipAddress);
+      return key && key === button.dataset.deviceIndexCode ? { ...device, bound: true, statusText: "registered, waiting for SDK status", lastError: "" } : device;
+    });
+    await refresh();
+  } catch (error) {
+    setScanCardStatus(button.dataset.deviceIndexCode, error.message);
+    throw error;
+  }
+}
+
+async function deleteDevice(button) {
+  const collectorUrl = $("manualCollectorUrl")?.value || $("downCollectorUrl")?.value;
+  const payload = {
+    collectorUrl,
+    deviceKey: button.dataset.deviceIndexCode || button.dataset.mac || button.dataset.ip,
+    macAddress: button.dataset.mac,
+    ipAddress: button.dataset.ip,
+    deviceIndexCode: button.dataset.deviceIndexCode
+  };
+  if (collectorUrl) {
+    await api("/api/collector-proxy/delete-device", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }).catch((error) => setScanCardStatus(button.dataset.deviceIndexCode, `collector delete failed: ${error.message}`));
+  }
+  await api("/api/devices/delete", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+  scanResults = scanResults.filter((device) => {
+    const key = normalizeDeviceIndexCode(device.deviceIndexCode || device.macAddress || device.deviceKey || device.ipAddress);
+    return key !== button.dataset.deviceIndexCode;
+  });
+  await refresh();
+}
+
+function setScanCardStatus(deviceIndexCode, message) {
+  scanResults = scanResults.map((device) => {
+    const key = normalizeDeviceIndexCode(device.deviceIndexCode || device.macAddress || device.deviceKey || device.ipAddress);
+    return key === deviceIndexCode ? { ...device, statusText: message, lastError: message } : device;
+  });
+  const card = document.querySelector(`.device-card[data-device-index-code="${CSS.escape(deviceIndexCode)}"]`);
+  const status = card?.querySelector('[data-role="scan-status"]');
+  if (status) status.textContent = message;
+}
+
+async function bindDevice() {
+  const deviceIndexCode = normalizeDeviceIndexCode($("bindMac")?.value || $("bindDeviceId")?.value || $("bindIp")?.value);
+  await api("/api/devices/bind", {
+    method: "POST",
+    body: JSON.stringify({
+      shopId: $("shopId")?.value,
+      shopName: $("shopName")?.value,
+      ipAddress: $("bindIp")?.value,
+      macAddress: $("bindMac")?.value,
+      deviceIndexCode,
+      deviceId: $("bindDeviceId")?.value || deviceIndexCode,
+      deviceName: $("bindDeviceName")?.value,
+      type: Number($("bindType")?.value || 0)
+    })
+  });
+  await refresh();
+}
+
+async function testEvent() {
+  await api("/api/test-event", {
+    method: "POST",
+    body: JSON.stringify({
+      macAddress: $("testMac")?.value,
+      enter: Number($("testEnter")?.value || 0),
+      exit: Number($("testExit")?.value || 0),
+      duplicatePeople: Number($("testDuplicate")?.value || 0)
+    })
+  });
+  await refresh();
+}
+
+async function testCollector() {
+  try {
+    const data = await api("/api/collector-proxy/health", {
+      method: "POST",
+      body: JSON.stringify({ collectorUrl: $("downCollectorUrl")?.value })
+    });
+    setText("downCollectorState", `collector reachable: ${data.result?.collector?.collectorId || "ok"}`);
+    await refresh();
+  } catch (error) {
+    setText("downCollectorState", `collector failed: ${error.message}`);
+  }
+}
+
+async function registerCollectorManual() {
+  try {
+    const deviceIndexCode = normalizeDeviceIndexCode($("bindMac")?.value || $("bindDeviceId")?.value || $("bindIp")?.value);
+    const response = await api("/api/collector-proxy/register-device", {
+      method: "POST",
+      body: JSON.stringify({
+        collectorUrl: $("manualCollectorUrl")?.value,
+        device: {
+          gatewayUrl: location.origin,
+          shopId: $("shopId")?.value,
+          shopName: $("shopName")?.value,
+          ipAddress: $("bindIp")?.value,
+          macAddress: $("bindMac")?.value,
+          deviceKey: deviceIndexCode || $("bindDeviceId")?.value || $("bindIp")?.value,
+          deviceIndexCode,
+          deviceId: $("bindDeviceId")?.value || deviceIndexCode,
+          deviceName: $("bindDeviceName")?.value,
+          type: Number($("bindType")?.value || 0),
+          sdkPort: Number($("sdkPort")?.value || 8000),
+          username: $("cameraUsername")?.value,
+          password: $("cameraPassword")?.value
+        }
+      })
+    });
+    setText("manualCollectorState", `registered: ${response.result?.collectorId || "ok"}`);
+    await refresh();
+  } catch (error) {
+    setText("manualCollectorState", `register failed: ${error.message}`);
+  }
+}
+
+async function triggerCollectorTestEvent() {
+  try {
+    const data = await api("/api/collector-proxy/test-event", {
+      method: "POST",
+      body: JSON.stringify({ collectorUrl: $("manualCollectorUrl")?.value })
+    });
+    setText("manualCollectorState", data.result?.event ? "collector test event sent" : "collector has no device");
+    await refresh();
+  } catch (error) {
+    setText("manualCollectorState", `collector test failed: ${error.message}`);
+  }
+}
+
+function renderCollectors(items) {
+  collectors = items;
+  syncCollectorDeviceStatus(items);
+  setValue("collectorEventUrl", `${location.origin}/api/collector/events`);
+  setValue("collectorHeartbeatUrl", `${location.origin}/api/collector/heartbeat`);
+  const container = $("collectors");
+  if (!container) return;
+  container.innerHTML = collectors.map(renderCollectorCard).join("") || `<div class="empty-state">No collectors</div>`;
+  container.querySelectorAll('[data-action="collector-delete"]').forEach((button) => {
+    button.onclick = () => deleteCollectorDevice(button).catch(showError);
+  });
+}
+
+function renderCollectorCard(collector) {
+  const status = collector.status || "unknown";
+  const devices = collector.devices || [];
+  return `<div class="collector-card">
+    <div class="device-title">
+      <strong>${escapeHtml(collector.collectorId)}</strong>
+      <span class="status-badge ${status === "online" ? "online" : status === "reachable" ? "muted" : "error"}">${escapeHtml(status)}</span>
+    </div>
+    <p>${escapeHtml(collector.baseUrl || collector.host || "")}</p>
+    <p>last heartbeat: ${escapeHtml(formatRelative(collector.lastSeen || collector.lastHeartbeatAt))}</p>
+    <div class="device-list">
+      ${devices.map((device) => renderCollectorDevice(device, collector)).join("") || "<span>No devices</span>"}
+    </div>
+  </div>`;
+}
+
+function renderCollectorDevice(device, collector) {
+  const error = device.lastError || device.worker?.lastError || "";
+  const workerStatus = device.worker?.status || device.connectionStatus || device.status || "-";
+  const key = normalizeDeviceIndexCode(device.deviceKey || device.macAddress || device.ipAddress);
+  return `<span>
+    ${escapeHtml(device.macAddress || device.deviceKey || device.ipAddress)}
+    (${escapeHtml(workerStatus)})
+    ${error ? `<strong class="error-text">${escapeHtml(error)}</strong>` : ""}
+    <button data-action="collector-delete" data-collector-url="${escapeHtml($("downCollectorUrl")?.value || collector.baseUrl || collector.host || "")}" data-device-key="${escapeHtml(device.deviceKey || key)}" data-mac="${escapeHtml(device.macAddress || "")}">delete</button>
+  </span>`;
+}
+
+function syncCollectorDeviceStatus(items) {
+  if (!scanResults.length) return;
+  const statuses = new Map();
+  for (const collector of items || []) {
+    for (const device of collector.devices || []) {
+      const key = normalizeDeviceIndexCode(device.deviceKey || device.macAddress || device.ipAddress);
+      const error = device.lastError || device.worker?.lastError || "";
+      const workerStatus = device.worker?.status || device.connectionStatus || device.status || "";
+      if (key) statuses.set(key, { error, workerStatus });
+    }
+  }
+  scanResults = scanResults.map((device) => {
+    const key = normalizeDeviceIndexCode(device.deviceIndexCode || device.macAddress || device.deviceKey || device.ipAddress);
+    const status = statuses.get(key);
+    if (!status) return device;
+    return {
+      ...device,
+      bound: true,
+      lastError: status.error || device.lastError || "",
+      statusText: status.error || status.workerStatus || device.statusText || ""
+    };
+  });
+}
+
+async function deleteCollectorDevice(button) {
+  const collectorUrl = button.dataset.collectorUrl || $("downCollectorUrl")?.value;
+  await api("/api/collector-proxy/delete-device", {
+    method: "POST",
+    body: JSON.stringify({
+      collectorUrl,
+      deviceKey: button.dataset.deviceKey,
+      macAddress: button.dataset.mac
+    })
+  });
+  await api("/api/devices/delete", {
+    method: "POST",
+    body: JSON.stringify({
+      deviceKey: button.dataset.deviceKey,
+      macAddress: button.dataset.mac
+    })
+  });
+  scanResults = scanResults.filter((device) => {
+    const key = normalizeDeviceIndexCode(device.deviceIndexCode || device.macAddress || device.deviceKey || device.ipAddress);
+    return key !== normalizeDeviceIndexCode(button.dataset.deviceKey || button.dataset.mac);
+  });
+  await refresh();
+}
+
+function renderEvents(events) {
+  const container = $("events");
+  if (!container) return;
+  container.innerHTML = events.map((entry) => {
+    const isHumanBody = entry.event?.eventType === "HumanBodyComparison";
+    const alert = entry.payload?.EventNotificationAlert || {};
+    const count = alert.peopleCounting || {};
+    const legacy = entry.legacy || {};
+    const ok = legacy.enabled ? legacy.ok : (entry.response?.ok && entry.response?.data?.code === 200);
+    const title = entry.event?.macAddress || entry.event?.deviceKey || alert.macAddress || "-";
+    const eventType = entry.event?.eventType || alert.eventType || "-";
+    const human = entry.event?.raw?.isapi?.HumanBodyComparison?.[0]?.HumanInfo || {};
+    const responseText = legacy.enabled
+      ? (legacy.ok ? `write ok - ${legacy.path}` : `write failed - ${legacy.error || legacy.response?.data?.message || JSON.stringify(legacy.response?.data || legacy.response)}`)
+      : "hik-contact-data not configured";
+    const details = isHumanBody
+      ? `<span>age <strong>${escapeHtml(human.ageGroup || "-")}</strong></span>
+         <span>gender <strong>${escapeHtml(human.gender || "-")}</strong></span>
+         <span>mask <strong>${escapeHtml(human.mask || "-")}</strong></span>
+         <span>hat <strong>${escapeHtml(human.hat || "-")}</strong></span>`
+      : `<span>enter <strong>${escapeHtml(count.enter ?? entry.event?.enter ?? 0)}</strong></span>
+         <span>exit <strong>${escapeHtml(count.exit ?? entry.event?.exit ?? 0)}</strong></span>
+         <span>duplicate <strong>${escapeHtml(count.duplicatePeople ?? entry.event?.duplicatePeople ?? 0)}</strong></span>`;
+    return `<div class="event-card">
+      <div class="event-main">
+        <span class="status-badge ${ok ? "online" : "error"}">${ok ? "ok" : "failed"}</span>
+        <strong>${escapeHtml(title)}</strong>
+        <span>${escapeHtml(eventType)}</span>
+        <span>${escapeHtml(formatTime(entry.time))}</span>
+      </div>
+      <div class="event-response">deviceIndexCode: ${escapeHtml(entry.deviceIndexCode || legacy.deviceIndexCode || "-")}</div>
+      <div class="event-counts">${details}</div>
+      <div class="event-response">${escapeHtml(responseText)}</div>
+    </div>`;
+  }).join("") || `<div class="empty-state">No events</div>`;
+}
+
+async function refreshLogs() {
+  const data = await api("/api/logs");
+  const container = $("logs");
+  if (!container) return;
+  container.innerHTML = (data.logs || []).map(renderLogItem).join("") || `<div class="empty-state">No logs</div>`;
+}
+
+function renderLogItem(log) {
+  const level = log.level || "info";
+  const meta = { ...log };
+  delete meta.level;
+  delete meta.time;
+  delete meta.message;
+  const tags = buildLogTags(meta);
+  return `<div class="log-item ${escapeHtml(level)}">
+    <span class="log-time">${escapeHtml(formatTime(log.time))}</span>
+    <span class="log-level">${escapeHtml(level.toUpperCase())}</span>
+    <span class="log-message">${escapeHtml(translateLogMessage(log.message))}</span>
+    ${tags ? `<div class="log-tags">${tags}</div>` : ""}
+  </div>`;
+}
+
+function buildLogTags(meta) {
+  const tagMap = [
+    ["collectorId", "collector"],
+    ["shopId", "shopId"],
+    ["shopName", "shop"],
+    ["macAddress", "MAC"],
+    ["deviceKey", "device"],
+    ["ipAddress", "IP"],
+    ["cidr", "CIDR"],
+    ["count", "count"],
+    ["deviceCount", "devices"],
+    ["type", "type"],
+    ["enter", "enter"],
+    ["exit", "exit"],
+    ["enabled", "enabled"],
+    ["deviceIndexCode", "deviceIndexCode"],
+    ["eventType", "event"]
+  ];
+  return tagMap
+    .filter(([key]) => meta[key] !== undefined && meta[key] !== "")
+    .map(([key, label]) => `<span>${label}: ${escapeHtml(formatLogValue(key, meta[key]))}</span>`)
+    .join("");
+}
+
+function formatLogValue(key, value) {
+  if (key === "type") return Number(value) === 1 ? "inside" : "outside";
+  if (key === "enabled") return value ? "enabled" : "disabled";
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
+function translateLogMessage(message) {
+  const messages = {
+    "local console started": "local console started",
+    "legacy hik service configured": "hik-contact-data configured",
+    "shop saved": "shop saved",
+    "scan started": "scan started",
+    "scan finished": "scan finished",
+    "device bound": "device bound",
+    "device bound locally": "device bound locally",
+    "device register flow completed": "device register flow completed",
+    "collector heartbeat received": "collector heartbeat received",
+    "collector device registered": "collector device registered",
+    "collector event received locally": "collector event received locally",
+    "legacy hik event forwarded": "forwarded to hik-contact-data",
+    "legacy hik event forward failed": "forward hik-contact-data failed"
+  };
+  return messages[message] || message || "";
+}
+
+function bindHandlers() {
+  document.querySelectorAll(".tab").forEach((tab) => {
+    tab.onclick = () => showPage(tab.dataset.page);
+  });
+  const handlers = [
+    ["refreshBtn", () => refresh().catch(showError)],
+    ["scanBtn", () => scan().catch(showError)],
+    ["bindBtn", () => bindDevice().catch(showError)],
+    ["connectLegacyHikBtn", connectLegacyHik],
+    ["loadShopsBtn", () => loadShops().catch(showError)],
+    ["saveShopBtn", () => saveShop().catch(showError)],
+    ["testEventBtn", () => testEvent().catch(showError)],
+    ["registerCollectorBtn", () => registerCollectorManual().catch(showError)],
+    ["testCollectorBtn", () => testCollector().catch(showError)],
+    ["collectorTestEventBtn", () => triggerCollectorTestEvent().catch(showError)],
+    ["refreshCollectorsBtn", () => refresh().catch(showError)],
+    ["saveReleaseBtn", () => saveReleaseConfig().catch(showError)],
+    ["checkReleaseBtn", () => checkRelease().catch(showError)]
+  ];
+  handlers.forEach(([id, handler]) => {
+    const element = $(id);
+    if (element) element.onclick = handler;
+  });
+  const shopSelect = $("shopSelect");
+  if (shopSelect) shopSelect.onchange = selectShop;
+}
+
+bindHandlers();
+refresh().catch(showError);
+setInterval(() => refresh().catch(console.error), 5000);
