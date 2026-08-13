@@ -20,6 +20,8 @@ let stage = "prepare";
 let percent = 0;
 let finishedAt = "";
 let exitCode = null;
+let stdoutBuffer = "";
+let stderrBuffer = "";
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
@@ -48,10 +50,24 @@ function runUpdate() {
   }
   const args = ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", updateScript, "-ManifestUrl", manifestUrl, "-RestartMode", "NoBrowser"];
   if (channel) args.push("-Channel", channel);
-  const child = spawn(powershellExe, args, { cwd: installRoot, windowsHide: false });
-  child.stdout.on("data", (chunk) => appendLog(String(chunk).trim()));
-  child.stderr.on("data", (chunk) => appendLog(String(chunk).trim()));
+  const child = spawn(powershellExe, args, {
+    cwd: installRoot,
+    windowsHide: false,
+    env: {
+      ...process.env,
+      PYTHONIOENCODING: "utf-8"
+    }
+  });
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => {
+    stdoutBuffer = appendStreamData(stdoutBuffer, chunk);
+  });
+  child.stderr.on("data", (chunk) => {
+    stderrBuffer = appendStreamData(stderrBuffer, chunk);
+  });
   child.on("exit", (code) => {
+    flushStreamBuffers();
     exitCode = code;
     finishedAt = new Date().toISOString();
     const wasRollback = status === "rollback";
@@ -66,6 +82,21 @@ function runUpdate() {
     message = `更新启动失败：${error.message}`;
     appendLog(message);
   });
+}
+
+function appendStreamData(buffer, chunk) {
+  const next = buffer + String(chunk);
+  const lines = next.split(/\r?\n/);
+  const rest = lines.pop() || "";
+  appendLog(lines.join("\n"));
+  return rest;
+}
+
+function flushStreamBuffers() {
+  appendLog(stdoutBuffer.trim());
+  appendLog(stderrBuffer.trim());
+  stdoutBuffer = "";
+  stderrBuffer = "";
 }
 
 function findUpdateScript() {
@@ -154,6 +185,7 @@ function pageHtml() {
       const res=await fetch('/api/status',{cache:'no-store'});
       const data=await res.json();
       document.getElementById('message').textContent=data.message||'';
+      document.getElementById('title').textContent=data.status==='done'?'更新完成':data.status==='rollback'?'已自动回滚':data.status==='error'?'更新失败':'正在更新摄像头本地控制台';
       const pct=Number(data.percent||0);
       const hasPercent=data.stage&&data.stage!=='prepare';
       document.getElementById('percent').textContent=(hasPercent||pct>0||data.status==='done')?Math.max(0,Math.min(100,pct))+'%':'准备中';

@@ -7,6 +7,9 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+[Console]::InputEncoding = [System.Text.UTF8Encoding]::new($false)
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+$OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 
 function Read-JsonFile {
   param([string]$Path)
@@ -213,78 +216,82 @@ Write-Host "Current version: $currentVersion"
 Write-Host "Channel: $currentChannel"
 Write-Host "Manifest URL: $ManifestUrl"
 
-$manifest = Invoke-RestMethod -Uri $ManifestUrl -UseBasicParsing
-$latestVersion = [string]$manifest.version
-if (-not $latestVersion -or -not $manifest.url) {
-  throw "Invalid update manifest. Required fields: version, url"
-}
-
-Write-Host "Latest version: $latestVersion"
-
-if ($latestVersion -eq $currentVersion) {
-  Write-Host "Already up to date."
-  exit 0
-}
-
-if ($CheckOnly) {
-  Write-Host "Update available: $currentVersion -> $latestVersion"
-  exit 0
-}
-
 $workDir = Join-Path $installRoot ".update"
 $statePath = Join-Path $workDir "update-state.json"
 $downloadPath = Join-Path $workDir "package.zip"
 $extractPath = Join-Path $workDir "package"
 $backupPath = Join-Path $installRoot (".backup-" + (Get-Date -Format "yyyyMMddHHmmss"))
 
-Remove-Item -LiteralPath $workDir -Recurse -Force -ErrorAction SilentlyContinue
-New-Item -ItemType Directory -Force -Path $workDir | Out-Null
-
-Write-Host "Downloading: $($manifest.url)"
-Download-FileWithProgress -Url $manifest.url -OutFile $downloadPath
-
-if ($manifest.sha256) {
-  Write-ProgressEvent -Stage "verify" -Percent 0 -Message "正在校验安装包..."
-  $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $downloadPath).Hash.ToLowerInvariant()
-  $expected = ([string]$manifest.sha256).ToLowerInvariant()
-  if ($actual -ne $expected) {
-    throw "SHA256 mismatch. expected=$expected actual=$actual"
-  }
-  Write-ProgressEvent -Stage "verify" -Percent 100 -Message "安装包校验完成"
-}
-
-Write-ProgressEvent -Stage "extract" -Percent 0 -Message "正在解压安装包..."
-Expand-Archive -LiteralPath $downloadPath -DestinationPath $extractPath -Force
-Write-ProgressEvent -Stage "extract" -Percent 100 -Message "安装包解压完成"
-$packageRoot = Get-ChildItem -LiteralPath $extractPath -Directory | Select-Object -First 1
-if (-not $packageRoot) {
-  throw "Package zip does not contain a root directory."
-}
-
-Write-Host "Stopping running services..."
-Write-ProgressEvent -Stage "stop" -Percent 0 -Message "正在停止旧版本..."
-Stop-CameraConsole
-Write-ProgressEvent -Stage "stop" -Percent 100 -Message "旧版本已停止"
-
-Write-Host "Creating backup: $backupPath"
-Write-ProgressEvent -Stage "backup" -Percent 0 -Message "正在备份旧版本..."
-New-Item -ItemType Directory -Force -Path $backupPath | Out-Null
-foreach ($item in Get-ChildItem -LiteralPath $installRoot -Force) {
-  if ($item.Name -in @(".update") -or $item.Name.StartsWith(".backup-")) {
-    continue
-  }
-  Copy-Item -LiteralPath $item.FullName -Destination $backupPath -Recurse -Force
-}
-Write-ProgressEvent -Stage "backup" -Percent 100 -Message "旧版本备份完成"
-Write-UpdateState -StatePath $statePath -State @{
-  status = "applying"
-  backupPath = $backupPath
-  targetVersion = $latestVersion
-  previousVersion = $currentVersion
-  manifestUrl = $ManifestUrl
-}
-
 try {
+  Write-ProgressEvent -Stage "manifest" -Percent 0 -Message "正在读取更新清单..."
+  $manifest = Invoke-RestMethod -Uri $ManifestUrl -UseBasicParsing
+  $latestVersion = [string]$manifest.version
+  if (-not $latestVersion -or -not $manifest.url) {
+    throw "更新清单无效，缺少 version 或 url 字段"
+  }
+
+  Write-Host "Latest version: $latestVersion"
+  Write-ProgressEvent -Stage "manifest" -Percent 100 -Message "更新清单读取完成：$latestVersion"
+
+  if ($latestVersion -eq $currentVersion) {
+    Write-ProgressEvent -Stage "done" -Percent 100 -Message "当前已是最新版本：$currentVersion"
+    Write-Host "Already up to date."
+    exit 0
+  }
+
+  if ($CheckOnly) {
+    Write-ProgressEvent -Stage "done" -Percent 100 -Message "发现新版本：$currentVersion -> $latestVersion"
+    Write-Host "Update available: $currentVersion -> $latestVersion"
+    exit 0
+  }
+
+  Remove-Item -LiteralPath $workDir -Recurse -Force -ErrorAction SilentlyContinue
+  New-Item -ItemType Directory -Force -Path $workDir | Out-Null
+
+  Write-Host "Downloading: $($manifest.url)"
+  Download-FileWithProgress -Url $manifest.url -OutFile $downloadPath
+
+  if ($manifest.sha256) {
+    Write-ProgressEvent -Stage "verify" -Percent 0 -Message "正在校验安装包..."
+    $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $downloadPath).Hash.ToLowerInvariant()
+    $expected = ([string]$manifest.sha256).ToLowerInvariant()
+    if ($actual -ne $expected) {
+      throw "安装包校验失败。expected=$expected actual=$actual"
+    }
+    Write-ProgressEvent -Stage "verify" -Percent 100 -Message "安装包校验完成"
+  }
+
+  Write-ProgressEvent -Stage "extract" -Percent 0 -Message "正在解压安装包..."
+  Expand-Archive -LiteralPath $downloadPath -DestinationPath $extractPath -Force
+  Write-ProgressEvent -Stage "extract" -Percent 100 -Message "安装包解压完成"
+  $packageRoot = Get-ChildItem -LiteralPath $extractPath -Directory | Select-Object -First 1
+  if (-not $packageRoot) {
+    throw "安装包结构无效，zip 中没有根目录"
+  }
+
+  Write-Host "Stopping running services..."
+  Write-ProgressEvent -Stage "stop" -Percent 0 -Message "正在停止旧版本..."
+  Stop-CameraConsole
+  Write-ProgressEvent -Stage "stop" -Percent 100 -Message "旧版本已停止"
+
+  Write-Host "Creating backup: $backupPath"
+  Write-ProgressEvent -Stage "backup" -Percent 0 -Message "正在备份旧版本..."
+  New-Item -ItemType Directory -Force -Path $backupPath | Out-Null
+  foreach ($item in Get-ChildItem -LiteralPath $installRoot -Force) {
+    if ($item.Name -in @(".update") -or $item.Name.StartsWith(".backup-")) {
+      continue
+    }
+    Copy-Item -LiteralPath $item.FullName -Destination $backupPath -Recurse -Force
+  }
+  Write-ProgressEvent -Stage "backup" -Percent 100 -Message "旧版本备份完成"
+  Write-UpdateState -StatePath $statePath -State @{
+    status = "applying"
+    backupPath = $backupPath
+    targetVersion = $latestVersion
+    previousVersion = $currentVersion
+    manifestUrl = $ManifestUrl
+  }
+
   Write-Host "Applying update..."
   Write-ProgressEvent -Stage "apply" -Percent 0 -Message "正在覆盖新版文件..."
   Copy-UpdateContent -SourceRoot $packageRoot.FullName -TargetRoot $installRoot
@@ -335,17 +342,36 @@ try {
   }
 } catch {
   $errorMessage = $_.Exception.Message
-  Write-Host "Update failed after backup: $errorMessage"
-  Write-ProgressEvent -Stage "rollback" -Percent 0 -Message "更新失败，正在自动回滚：$errorMessage"
-  Restore-Backup -BackupPath $backupPath -InstallRoot $installRoot -StatePath $statePath
-  if ($RestartMode -ne "None") {
-    Start-CameraConsole -InstallRoot $installRoot -RestartMode $RestartMode
-    if (Wait-ConsoleHealthy -InstallRoot $installRoot -TimeoutSeconds 60) {
-      Write-ProgressEvent -Stage "rollback" -Percent 100 -Message "更新失败，已回滚并启动旧版本"
-    } else {
-      Write-ProgressEvent -Stage "error" -Percent 100 -Message "更新失败，已回滚，但旧版本启动验证失败，请手动检查"
-      throw
+  Write-Host "Update failed: $errorMessage"
+  if (Test-Path -LiteralPath $backupPath) {
+    Write-ProgressEvent -Stage "rollback" -Percent 0 -Message "更新失败，正在自动回滚：$errorMessage"
+    Restore-Backup -BackupPath $backupPath -InstallRoot $installRoot -StatePath $statePath
+    if ($RestartMode -ne "None") {
+      Start-CameraConsole -InstallRoot $installRoot -RestartMode $RestartMode
+      if (Wait-ConsoleHealthy -InstallRoot $installRoot -TimeoutSeconds 60) {
+        Write-ProgressEvent -Stage "rollback" -Percent 100 -Message "更新失败，已回滚并启动旧版本"
+      } else {
+        Write-ProgressEvent -Stage "error" -Percent 100 -Message "更新失败，已回滚，但旧版本启动验证失败，请手动检查"
+        throw
+      }
     }
+    throw "更新失败，已回滚到旧版本：$errorMessage"
+  } else {
+    if (Test-Path -LiteralPath $statePath) {
+      Write-UpdateState -StatePath $statePath -State @{
+        status = "failed-before-apply"
+        reason = $errorMessage
+        manifestUrl = $ManifestUrl
+      }
+    } else {
+      New-Item -ItemType Directory -Force -Path $workDir | Out-Null
+      Write-UpdateState -StatePath $statePath -State @{
+        status = "failed-before-apply"
+        reason = $errorMessage
+        manifestUrl = $ManifestUrl
+      }
+    }
+    Write-ProgressEvent -Stage "error" -Percent 100 -Message "更新失败，尚未覆盖旧版本：$errorMessage"
+    throw "更新失败，尚未覆盖旧版本：$errorMessage"
   }
-  throw "更新失败，已回滚到旧版本：$errorMessage"
 }

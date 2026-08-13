@@ -264,6 +264,7 @@ start "" "http://127.0.0.1:%PORT%"
 
 @'
 @echo off
+chcp 65001 >nul
 powershell -ExecutionPolicy Bypass -File "%~dp0update-windows.ps1" %*
 pause
 '@ | Set-Content -Path (Join-Path $packageDir "update.cmd") -Encoding ASCII
