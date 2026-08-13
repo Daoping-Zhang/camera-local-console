@@ -50,7 +50,7 @@ function Download-FileWithProgress {
     [string]$Url,
     [string]$OutFile
   )
-  Write-ProgressEvent -Stage "download" -Percent 0 -Message "正在连接下载服务器..."
+  Write-ProgressEvent -Stage "download" -Percent 0 -Message "Connecting to download server..."
   $request = [System.Net.HttpWebRequest]::Create($Url)
   $request.UserAgent = "camera-local-console-updater"
   $response = $request.GetResponse()
@@ -68,11 +68,11 @@ function Download-FileWithProgress {
         if ($total -gt 0) {
           $percent = [Math]::Min(100, [int](($readTotal * 100) / $total))
           if ($percent -ne $lastPercent) {
-            Write-ProgressEvent -Stage "download" -Percent $percent -Message ("正在下载更新包 {0}%" -f $percent)
+            Write-ProgressEvent -Stage "download" -Percent $percent -Message ("Downloading package {0}%" -f $percent)
             $lastPercent = $percent
           }
         } else {
-          Write-ProgressEvent -Stage "download" -Percent 0 -Message ("正在下载更新包 {0:n1} MB" -f ($readTotal / 1MB))
+          Write-ProgressEvent -Stage "download" -Percent 0 -Message ("Downloading package {0:n1} MB" -f ($readTotal / 1MB))
         }
       }
     } finally {
@@ -82,7 +82,7 @@ function Download-FileWithProgress {
   } finally {
     $response.Close()
   }
-  Write-ProgressEvent -Stage "download" -Percent 100 -Message "更新包下载完成"
+  Write-ProgressEvent -Stage "download" -Percent 100 -Message "Package download completed"
 }
 
 function Stop-CameraConsole {
@@ -142,7 +142,7 @@ function Restore-Backup {
   if (-not (Test-Path -LiteralPath $BackupPath)) {
     throw "Backup path does not exist: $BackupPath"
   }
-  Write-ProgressEvent -Stage "rollback" -Percent 0 -Message "正在回滚到旧版本..."
+  Write-ProgressEvent -Stage "rollback" -Percent 0 -Message "Rolling back to previous version..."
   Stop-CameraConsole
   Copy-UpdateContent -SourceRoot $BackupPath -TargetRoot $InstallRoot
   if ($StatePath) {
@@ -152,7 +152,7 @@ function Restore-Backup {
       reason = "update failure"
     }
   }
-  Write-ProgressEvent -Stage "rollback" -Percent 100 -Message "已回滚到旧版本"
+  Write-ProgressEvent -Stage "rollback" -Percent 100 -Message "Rollback completed"
 }
 
 function Start-CameraConsole {
@@ -223,24 +223,24 @@ $extractPath = Join-Path $workDir "package"
 $backupPath = Join-Path $installRoot (".backup-" + (Get-Date -Format "yyyyMMddHHmmss"))
 
 try {
-  Write-ProgressEvent -Stage "manifest" -Percent 0 -Message "正在读取更新清单..."
+  Write-ProgressEvent -Stage "manifest" -Percent 0 -Message "Reading update manifest..."
   $manifest = Invoke-RestMethod -Uri $ManifestUrl -UseBasicParsing
   $latestVersion = [string]$manifest.version
   if (-not $latestVersion -or -not $manifest.url) {
-    throw "更新清单无效，缺少 version 或 url 字段"
+    throw "Invalid update manifest. Missing version or url."
   }
 
   Write-Host "Latest version: $latestVersion"
-  Write-ProgressEvent -Stage "manifest" -Percent 100 -Message "更新清单读取完成：$latestVersion"
+  Write-ProgressEvent -Stage "manifest" -Percent 100 -Message "Update manifest loaded: $latestVersion"
 
   if ($latestVersion -eq $currentVersion) {
-    Write-ProgressEvent -Stage "done" -Percent 100 -Message "当前已是最新版本：$currentVersion"
+    Write-ProgressEvent -Stage "done" -Percent 100 -Message "Already up to date: $currentVersion"
     Write-Host "Already up to date."
     exit 0
   }
 
   if ($CheckOnly) {
-    Write-ProgressEvent -Stage "done" -Percent 100 -Message "发现新版本：$currentVersion -> $latestVersion"
+    Write-ProgressEvent -Stage "done" -Percent 100 -Message "Update available: $currentVersion -> $latestVersion"
     Write-Host "Update available: $currentVersion -> $latestVersion"
     exit 0
   }
@@ -252,30 +252,30 @@ try {
   Download-FileWithProgress -Url $manifest.url -OutFile $downloadPath
 
   if ($manifest.sha256) {
-    Write-ProgressEvent -Stage "verify" -Percent 0 -Message "正在校验安装包..."
+    Write-ProgressEvent -Stage "verify" -Percent 0 -Message "Verifying package..."
     $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $downloadPath).Hash.ToLowerInvariant()
     $expected = ([string]$manifest.sha256).ToLowerInvariant()
     if ($actual -ne $expected) {
-      throw "安装包校验失败。expected=$expected actual=$actual"
+      throw "Package checksum mismatch. expected=$expected actual=$actual"
     }
-    Write-ProgressEvent -Stage "verify" -Percent 100 -Message "安装包校验完成"
+    Write-ProgressEvent -Stage "verify" -Percent 100 -Message "Package verified"
   }
 
-  Write-ProgressEvent -Stage "extract" -Percent 0 -Message "正在解压安装包..."
+  Write-ProgressEvent -Stage "extract" -Percent 0 -Message "Extracting package..."
   Expand-Archive -LiteralPath $downloadPath -DestinationPath $extractPath -Force
-  Write-ProgressEvent -Stage "extract" -Percent 100 -Message "安装包解压完成"
+  Write-ProgressEvent -Stage "extract" -Percent 100 -Message "Package extracted"
   $packageRoot = Get-ChildItem -LiteralPath $extractPath -Directory | Select-Object -First 1
   if (-not $packageRoot) {
-    throw "安装包结构无效，zip 中没有根目录"
+    throw "Invalid package structure. The zip does not contain a root directory."
   }
 
   Write-Host "Stopping running services..."
-  Write-ProgressEvent -Stage "stop" -Percent 0 -Message "正在停止旧版本..."
+  Write-ProgressEvent -Stage "stop" -Percent 0 -Message "Stopping previous version..."
   Stop-CameraConsole
-  Write-ProgressEvent -Stage "stop" -Percent 100 -Message "旧版本已停止"
+  Write-ProgressEvent -Stage "stop" -Percent 100 -Message "Previous version stopped"
 
   Write-Host "Creating backup: $backupPath"
-  Write-ProgressEvent -Stage "backup" -Percent 0 -Message "正在备份旧版本..."
+  Write-ProgressEvent -Stage "backup" -Percent 0 -Message "Creating backup..."
   New-Item -ItemType Directory -Force -Path $backupPath | Out-Null
   foreach ($item in Get-ChildItem -LiteralPath $installRoot -Force) {
     if ($item.Name -in @(".update") -or $item.Name.StartsWith(".backup-")) {
@@ -283,7 +283,7 @@ try {
     }
     Copy-Item -LiteralPath $item.FullName -Destination $backupPath -Recurse -Force
   }
-  Write-ProgressEvent -Stage "backup" -Percent 100 -Message "旧版本备份完成"
+  Write-ProgressEvent -Stage "backup" -Percent 100 -Message "Backup completed"
   Write-UpdateState -StatePath $statePath -State @{
     status = "applying"
     backupPath = $backupPath
@@ -293,9 +293,9 @@ try {
   }
 
   Write-Host "Applying update..."
-  Write-ProgressEvent -Stage "apply" -Percent 0 -Message "正在覆盖新版文件..."
+  Write-ProgressEvent -Stage "apply" -Percent 0 -Message "Applying new files..."
   Copy-UpdateContent -SourceRoot $packageRoot.FullName -TargetRoot $installRoot
-  Write-ProgressEvent -Stage "apply" -Percent 100 -Message "新版文件覆盖完成"
+  Write-ProgressEvent -Stage "apply" -Percent 100 -Message "New files applied"
   Write-UpdateState -StatePath $statePath -State @{
     status = "restarting"
     backupPath = $backupPath
@@ -312,7 +312,7 @@ try {
   } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $versionFile -Encoding UTF8
 
   Write-Host "Update completed. Backup: $backupPath"
-  Write-ProgressEvent -Stage "restart" -Percent 0 -Message "正在重启控制台..."
+  Write-ProgressEvent -Stage "restart" -Percent 0 -Message "Restarting console..."
   Sync-AutostartShortcut -InstallRoot $installRoot
   if ($RestartMode -eq "None") {
     Write-Host "Restart skipped."
@@ -323,13 +323,13 @@ try {
       previousVersion = $currentVersion
       manifestUrl = $ManifestUrl
     }
-    Write-ProgressEvent -Stage "done" -Percent 100 -Message "更新完成，未自动重启"
+    Write-ProgressEvent -Stage "done" -Percent 100 -Message "Update completed. Restart skipped."
   } else {
     Write-Host "Restarting camera console..."
     Start-CameraConsole -InstallRoot $installRoot -RestartMode $RestartMode
-    Write-ProgressEvent -Stage "health" -Percent 0 -Message "正在确认新版控制台是否可用..."
+    Write-ProgressEvent -Stage "health" -Percent 0 -Message "Checking new console health..."
     if (-not (Wait-ConsoleHealthy -InstallRoot $installRoot -TimeoutSeconds 60)) {
-      throw "新版控制台 60 秒内没有恢复，准备自动回滚。"
+      throw "New console did not become healthy within 60 seconds."
     }
     Write-UpdateState -StatePath $statePath -State @{
       status = "done"
@@ -338,24 +338,24 @@ try {
       previousVersion = $currentVersion
       manifestUrl = $ManifestUrl
     }
-    Write-ProgressEvent -Stage "done" -Percent 100 -Message "更新完成，控制台已重启"
+    Write-ProgressEvent -Stage "done" -Percent 100 -Message "Update completed. Console restarted."
   }
 } catch {
   $errorMessage = $_.Exception.Message
   Write-Host "Update failed: $errorMessage"
   if (Test-Path -LiteralPath $backupPath) {
-    Write-ProgressEvent -Stage "rollback" -Percent 0 -Message "更新失败，正在自动回滚：$errorMessage"
+    Write-ProgressEvent -Stage "rollback" -Percent 0 -Message "Update failed. Rolling back: $errorMessage"
     Restore-Backup -BackupPath $backupPath -InstallRoot $installRoot -StatePath $statePath
     if ($RestartMode -ne "None") {
       Start-CameraConsole -InstallRoot $installRoot -RestartMode $RestartMode
       if (Wait-ConsoleHealthy -InstallRoot $installRoot -TimeoutSeconds 60) {
-        Write-ProgressEvent -Stage "rollback" -Percent 100 -Message "更新失败，已回滚并启动旧版本"
+        Write-ProgressEvent -Stage "rollback" -Percent 100 -Message "Update failed. Previous version restored and started."
       } else {
-        Write-ProgressEvent -Stage "error" -Percent 100 -Message "更新失败，已回滚，但旧版本启动验证失败，请手动检查"
+        Write-ProgressEvent -Stage "error" -Percent 100 -Message "Update failed. Rolled back, but previous version health check failed."
         throw
       }
     }
-    throw "更新失败，已回滚到旧版本：$errorMessage"
+    throw "Update failed and rolled back to previous version: $errorMessage"
   } else {
     if (Test-Path -LiteralPath $statePath) {
       Write-UpdateState -StatePath $statePath -State @{
@@ -371,7 +371,7 @@ try {
         manifestUrl = $ManifestUrl
       }
     }
-    Write-ProgressEvent -Stage "error" -Percent 100 -Message "更新失败，尚未覆盖旧版本：$errorMessage"
-    throw "更新失败，尚未覆盖旧版本：$errorMessage"
+    Write-ProgressEvent -Stage "error" -Percent 100 -Message "Update failed before applying files: $errorMessage"
+    throw "Update failed before applying files: $errorMessage"
   }
 }

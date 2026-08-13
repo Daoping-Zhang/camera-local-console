@@ -122,13 +122,34 @@ function appendLog(line) {
     if (progress) {
       stage = progress.stage || stage;
       percent = Number.isFinite(Number(progress.percent)) ? Number(progress.percent) : percent;
-      message = progress.message || message;
       if (stage === "rollback") status = "rollback";
+      message = localizedProgressMessage({ status, stage, percent, rawMessage: progress.message });
       logs.push({ time: progress.time || new Date().toISOString(), line: progress.message || item });
       continue;
     }
     logs.push({ time: new Date().toISOString(), line: item });
   }
+}
+
+function localizedProgressMessage(progress) {
+  const pct = Math.max(0, Math.min(100, Number(progress.percent || 0)));
+  const raw = String(progress.rawMessage || "");
+  const versionMatch = raw.match(/(\d+\.\d+\.\d+(?:[-+][\w.-]+)?)/);
+  const stageMessages = {
+    manifest: pct >= 100 ? `更新清单读取完成${versionMatch ? `：${versionMatch[1]}` : ""}` : "正在读取更新清单...",
+    download: pct > 0 ? `正在下载更新包 ${pct}%` : "正在连接下载服务器...",
+    verify: pct >= 100 ? "安装包校验完成" : "正在校验安装包...",
+    extract: pct >= 100 ? "安装包解压完成" : "正在解压安装包...",
+    stop: pct >= 100 ? "旧版本已停止" : "正在停止旧版本...",
+    backup: pct >= 100 ? "旧版本备份完成" : "正在备份旧版本...",
+    apply: pct >= 100 ? "新版文件覆盖完成" : "正在覆盖新版文件...",
+    restart: "正在重启控制台...",
+    health: "正在确认新版控制台是否可用...",
+    rollback: pct >= 100 ? "更新失败，已回滚到旧版本" : "更新失败，正在自动回滚...",
+    error: "更新失败，旧版本未被覆盖",
+    done: "更新完成"
+  };
+  return stageMessages[progress.stage] || progress.rawMessage || message;
 }
 
 function parseProgressLine(line) {
