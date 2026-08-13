@@ -244,6 +244,8 @@ set "GATEWAY_URL=http://127.0.0.1:%PORT%"
 set "HIK_SDK_DIR=%~dp0sdk\hikvision"
 set "COLLECTOR_ADAPTER=hikvision"
 
+if "%NO_BROWSER%"=="0" powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0open-starting-page.ps1" -Port "%PORT%" -InstallRoot "%~dp0"
+
 if "%START_CONSOLE%"=="1" (
   if "%START_MINIMIZED%"=="1" (
     start "camera-console" /min cmd /k ""%NODE_EXE%" "%APP_DIR%\src\server.js""
@@ -254,7 +256,6 @@ if "%START_CONSOLE%"=="1" (
   powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command "Start-Process -FilePath $env:NODE_EXE -ArgumentList @((Join-Path $env:APP_DIR 'src\server.js')) -WorkingDirectory $env:APP_DIR -WindowStyle Hidden"
 )
 timeout /t 2 /nobreak >nul
-if "%NO_BROWSER%"=="0" start "" "http://127.0.0.1:%PORT%"
 '@ | Set-Content -Path (Join-Path $packageDir "start-all.cmd") -Encoding ASCII
 
 @'
@@ -268,6 +269,77 @@ if exist "%~dp0config\ports.env" (
 )
 start "" "http://127.0.0.1:%PORT%"
 '@ | Set-Content -Path (Join-Path $packageDir "open-console.cmd") -Encoding ASCII
+
+@'
+param(
+  [string]$Port = "3000",
+  [string]$InstallRoot = $PSScriptRoot
+)
+
+$ErrorActionPreference = "Stop"
+$InstallRoot = (Resolve-Path -LiteralPath $InstallRoot).Path
+$startupDir = Join-Path $InstallRoot ".startup"
+New-Item -ItemType Directory -Force -Path $startupDir | Out-Null
+$consoleUrl = "http://127.0.0.1:$Port"
+$healthUrl = "$consoleUrl/api/state"
+$pagePath = Join-Path $startupDir "console-starting.html"
+
+@"
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>正在启动本地控制台</title>
+  <style>
+    body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f5f7fb;color:#111827;font-family:Arial,"Microsoft YaHei",sans-serif}
+    main{width:min(520px,calc(100vw - 32px));background:white;border:1px solid #d8dee9;border-radius:10px;padding:24px;box-shadow:0 18px 50px rgba(15,23,42,.08)}
+    h1,p{margin:0}
+    h1{font-size:22px}
+    p{margin-top:10px;color:#64748b;line-height:1.6}
+    .bar{height:8px;background:#e5e7eb;border-radius:999px;overflow:hidden;margin-top:18px}
+    .bar span{display:block;width:45%;height:100%;background:#047857;border-radius:999px;animation:move 1.2s infinite ease-in-out}
+    .actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}
+    a{display:inline-flex;align-items:center;min-height:36px;padding:0 14px;border-radius:6px;background:#047857;color:white;text-decoration:none;font-weight:700}
+    a.secondary{background:white;color:#344054;border:1px solid #cbd5e1}
+    @keyframes move{0%{transform:translateX(-110%)}100%{transform:translateX(240%)}}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>正在启动本地控制台</h1>
+    <p id="status">服务正在后台启动，启动完成后会自动进入控制台。</p>
+    <div class="bar"><span></span></div>
+    <div class="actions">
+      <a href="$consoleUrl">手动打开控制台</a>
+      <a class="secondary" href="$healthUrl">查看服务状态</a>
+    </div>
+  </main>
+  <script>
+    const consoleUrl = "$consoleUrl";
+    const healthUrl = "$healthUrl";
+    let attempts = 0;
+    async function check() {
+      attempts += 1;
+      try {
+        await fetch(healthUrl + "?t=" + Date.now(), { cache: "no-store", mode: "no-cors" });
+        document.getElementById("status").textContent = "启动完成，正在进入控制台...";
+        location.href = consoleUrl;
+        return;
+      } catch {}
+      document.getElementById("status").textContent = attempts > 20
+        ? "启动时间较长，请稍等，或点击下方按钮手动打开控制台。"
+        : "服务正在后台启动，启动完成后会自动进入控制台。";
+      setTimeout(check, 1200);
+    }
+    setTimeout(check, 800);
+  </script>
+</body>
+</html>
+"@ | Set-Content -LiteralPath $pagePath -Encoding UTF8
+
+Start-Process -FilePath $pagePath
+'@ | Set-Content -Path (Join-Path $packageDir "open-starting-page.ps1") -Encoding UTF8
 
 @'
 @echo off
@@ -404,6 +476,7 @@ Start:
 
 Open console:
   open-console.cmd
+  open-starting-page.ps1
 
 Stop:
   stop-all.cmd
