@@ -9,7 +9,7 @@ function Copy-UpdateContent {
     [string]$SourceRoot,
     [string]$TargetRoot
   )
-  $preserve = @("config", "data", "logs")
+  $preserve = @("config", "data", "logs", "runtime")
   Get-ChildItem -LiteralPath $SourceRoot -Force | ForEach-Object {
     if ($preserve -contains $_.Name) {
       return

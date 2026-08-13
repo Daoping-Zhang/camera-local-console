@@ -216,11 +216,12 @@ function pageHtml() {
       document.getElementById('message').textContent=data.message||'';
       document.getElementById('title').textContent=data.status==='done'?'更新完成':data.status==='rollback'?'已自动回滚':data.status==='error'?'更新失败':'正在更新摄像头本地控制台';
       const pct=Number(data.percent||0);
-      const hasPercent=data.stage&&data.stage!=='prepare';
-      document.getElementById('percent').textContent=(hasPercent||pct>0||data.status==='done')?Math.max(0,Math.min(100,pct))+'%':'准备中';
+      const boundedPct=Math.max(0,Math.min(100,pct));
+      const hasPercent=pct>0||data.status==='done';
+      document.getElementById('percent').textContent=hasPercent?boundedPct+'%':(data.stage==='prepare'?'准备中':'处理中');
       const bar=document.getElementById('bar');
-      bar.className='bar '+((hasPercent||pct>0||data.status==='done')?'':'unknown');
-      bar.querySelector('span').style.width=Math.max(0,Math.min(100,pct))+'%';
+      bar.className='bar '+(hasPercent?'':'unknown');
+      bar.querySelector('span').style.width=boundedPct+'%';
       document.getElementById('logs').textContent=(data.logs||[]).map(x=>'['+x.time+'] '+x.line).join('\\n');
       document.getElementById('consoleLink').href=data.consoleUrl;
       document.getElementById('panel').className='panel '+data.status;

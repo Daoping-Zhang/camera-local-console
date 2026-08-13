@@ -186,9 +186,10 @@ function Copy-UpdateContent {
     [string]$TargetRoot
   )
 
-  $preserve = @("config", "data", "logs")
+  $preserve = @("config", "data", "logs", "runtime")
   Get-ChildItem -LiteralPath $SourceRoot -Force | ForEach-Object {
     if ($preserve -contains $_.Name) {
+      Write-Host "Preserving local directory: $($_.Name)"
       return
     }
     $target = Join-Path $TargetRoot $_.Name
