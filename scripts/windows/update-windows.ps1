@@ -41,6 +41,29 @@ function Copy-UpdateContent {
   }
 }
 
+function Sync-AutostartShortcut {
+  param([string]$InstallRoot)
+  $startup = [Environment]::GetFolderPath("Startup")
+  $shortcut = Join-Path $startup "camera-local-console.lnk"
+  if (-not (Test-Path -LiteralPath $shortcut)) {
+    Write-Host "Startup auto-run is not enabled; skip shortcut sync."
+    return
+  }
+  $target = Join-Path $InstallRoot "start-all.cmd"
+  if (-not (Test-Path -LiteralPath $target)) {
+    Write-Host "start-all.cmd was not found; skip shortcut sync."
+    return
+  }
+  $shell = New-Object -ComObject WScript.Shell
+  $link = $shell.CreateShortcut($shortcut)
+  $link.TargetPath = $target
+  $link.Arguments = "/minimized /no-browser"
+  $link.WorkingDirectory = $InstallRoot
+  $link.IconLocation = $target
+  $link.Save()
+  Write-Host "Startup auto-run shortcut synced: $shortcut"
+}
+
 $installRoot = Resolve-Path $PSScriptRoot
 $versionFile = Join-Path $installRoot "version.json"
 $current = Read-JsonFile -Path $versionFile
@@ -120,6 +143,7 @@ Copy-UpdateContent -SourceRoot $packageRoot.FullName -TargetRoot $installRoot
 } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $versionFile -Encoding UTF8
 
 Write-Host "Update completed. Backup: $backupPath"
+Sync-AutostartShortcut -InstallRoot $installRoot
 $startCmd = Join-Path $installRoot "start-all.cmd"
 if ($RestartMode -eq "None") {
   Write-Host "Restart skipped."
