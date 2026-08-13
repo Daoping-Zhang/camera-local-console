@@ -1,0 +1,17 @@
+FROM m.daocloud.io/docker.io/library/node:20-bookworm-slim
+
+WORKDIR /app
+
+ENV NODE_ENV=production
+ENV RELEASE_ADMIN_HOST=0.0.0.0
+ENV RELEASE_ADMIN_PORT=3200
+
+COPY package.json ./
+COPY release-admin ./release-admin
+COPY release ./release
+
+RUN mkdir -p /app/release/out
+
+EXPOSE 3200
+
+CMD ["npm", "run", "release-admin"]

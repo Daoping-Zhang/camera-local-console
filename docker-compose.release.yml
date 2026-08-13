@@ -1,0 +1,18 @@
+services:
+  release-admin:
+    build:
+      context: .
+      dockerfile: Dockerfile.release-admin
+    image: camera-release-admin:latest
+    container_name: camera-release-admin
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3200:3200"
+    environment:
+      RELEASE_ADMIN_HOST: 0.0.0.0
+      RELEASE_ADMIN_PORT: 3200
+      RELEASE_BASE_URL: ${RELEASE_BASE_URL:-https://www.fenqunshuju.com/releases/camera-local-console}
+      RELEASE_ADMIN_USER: ${RELEASE_ADMIN_USER:-admin}
+      RELEASE_ADMIN_PASSWORD: ${RELEASE_ADMIN_PASSWORD:?set RELEASE_ADMIN_PASSWORD in .env.release}
+    volumes:
+      - ./release/out:/app/release/out

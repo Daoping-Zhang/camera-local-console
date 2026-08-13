@@ -91,6 +91,16 @@ or:
 scripts\start\start-release-admin.cmd
 ```
 
+Run with Docker on a server:
+
+```bash
+cp .env.release.example .env.release
+vi .env.release
+docker compose --env-file .env.release -f docker-compose.release.yml up -d --build
+```
+
+The container binds to `127.0.0.1:3200` only. Put Nginx in front of it for public HTTPS access.
+
 Defaults:
 
 ```text
