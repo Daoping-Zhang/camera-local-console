@@ -27,6 +27,7 @@ const recentEvents = [];
 const collectors = new Map();
 let collectorProcess = null;
 let collectorRefreshPromise = null;
+let collectorPortConflict = false;
 let lastCollectorRefreshAt = 0;
 const COLLECTOR_REFRESH_INTERVAL_MS = 5_000;
 const MANAGED_COLLECTOR_ID = "collector-local-adapter";
@@ -330,6 +331,7 @@ async function registerDeviceFlow(body) {
 function scheduleConfiguredCollectorRefresh(options = {}) {
   const collectorUrl = state.localCollector?.baseUrl;
   if (!collectorUrl || state.localCollector?.autoConnect === false) return collectorRefreshPromise;
+  if (collectorPortConflict) return collectorRefreshPromise;
   const now = Date.now();
   if (!options.force && now - lastCollectorRefreshAt < COLLECTOR_REFRESH_INTERVAL_MS) return collectorRefreshPromise;
   if (collectorRefreshPromise) return collectorRefreshPromise;
@@ -354,6 +356,13 @@ async function ensureManagedCollector() {
   const collectorUrl = state.localCollector?.baseUrl;
   if (!collectorUrl || state.localCollector?.autoConnect === false) return;
   if (!isLocalCollectorUrl(collectorUrl)) return;
+  const parsed = new URL(collectorUrl);
+  if (Number(parsed.port || 80) === PORT) {
+    collectorPortConflict = true;
+    logger.error("collector port conflicts with console port", { port: PORT, hint: "请修改 COLLECTOR_PORT 或本地采集器地址" });
+    return;
+  }
+  collectorPortConflict = false;
   if (await isCollectorReachable(collectorUrl)) return;
   startManagedCollector();
   await waitForCollectorReachable(collectorUrl);

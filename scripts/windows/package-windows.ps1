@@ -194,6 +194,25 @@ if exist "%~dp0config\ports.env" (
   )
 )
 set "LOCAL_COLLECTOR_URL=http://127.0.0.1:%COLLECTOR_PORT%"
+if "%PORT%"=="%COLLECTOR_PORT%" (
+  echo.
+  echo PORT and COLLECTOR_PORT cannot be the same value: %PORT%
+  echo Please edit config\ports.env, then run start-all.cmd again.
+  echo.
+  pause
+  exit /b 1
+)
+for %%P in (%PORT% %COLLECTOR_PORT%) do (
+  netstat -ano | findstr /r /c:":%%P .*LISTENING" >nul
+  if not errorlevel 1 (
+    echo.
+    echo Port %%P is already in use.
+    echo Please edit config\ports.env, change PORT or COLLECTOR_PORT, then run start-all.cmd again.
+    echo.
+    pause
+    exit /b 1
+  )
+)
 set "NODE_EXE=%~dp0runtime\node\bin\node.exe"
 if not exist "%NODE_EXE%" set "NODE_EXE=%~dp0runtime\node\node.exe"
 if not exist "%NODE_EXE%" set "NODE_EXE=node"
@@ -231,6 +250,7 @@ pause
 @'
 @echo off
 taskkill /FI "WINDOWTITLE eq camera-console*" /T /F >nul 2>nul
+taskkill /FI "WINDOWTITLE eq camera-collector-3100*" /T /F >nul 2>nul
 echo stopped
 pause
 '@ | Set-Content -Path (Join-Path $packageDir "stop-all.cmd") -Encoding ASCII
@@ -250,9 +270,10 @@ Stop:
 Update:
   update.cmd
 
-Default URLs:
-  Console:   http://127.0.0.1:3000
-  Collector: http://127.0.0.1:3100
+Ports:
+  Default console:   http://127.0.0.1:3000
+  Default collector: http://127.0.0.1:3100
+  If a port is already in use, edit config\ports.env and run start-all.cmd again.
 
 SDK path:
   sdk\hikvision

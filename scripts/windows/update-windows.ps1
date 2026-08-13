@@ -15,6 +15,7 @@ function Read-JsonFile {
 }
 
 function Stop-CameraConsole {
+  taskkill /FI "WINDOWTITLE eq camera-console*" /T /F | Out-Null
   taskkill /FI "WINDOWTITLE eq camera-console-3000*" /T /F | Out-Null
   taskkill /FI "WINDOWTITLE eq camera-collector-3100*" /T /F | Out-Null
 }
