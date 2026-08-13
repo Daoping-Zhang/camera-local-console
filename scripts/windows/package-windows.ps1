@@ -203,8 +203,8 @@ if "%PORT%"=="%COLLECTOR_PORT%" (
   exit /b 1
 )
 for %%P in (%PORT% %COLLECTOR_PORT%) do (
-  netstat -ano | findstr /r /c:":%%P .*LISTENING" >nul
-  if not errorlevel 1 (
+  powershell -NoProfile -Command "$p=%%P; if (Get-Command Get-NetTCPConnection -ErrorAction SilentlyContinue) { $hit=Get-NetTCPConnection -LocalPort $p -State Listen -ErrorAction SilentlyContinue } else { $hit=netstat -ano | Select-String (':' + $p + '\s+.*LISTENING') }; if ($hit) { exit 1 } else { exit 0 }" >nul 2>nul
+  if errorlevel 1 (
     echo.
     echo Port %%P is already in use.
     echo Please edit config\ports.env, change PORT or COLLECTOR_PORT, then run start-all.cmd again.

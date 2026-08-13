@@ -189,6 +189,7 @@ async function handleApi(req, res) {
       baseUrl: String(body.localCollector?.baseUrl || state.localCollector?.baseUrl || "http://127.0.0.1:3100").trim(),
       autoConnect: body.localCollector?.autoConnect !== false
     };
+    collectorPortConflict = false;
     state.server = {
       ...(state.server || {}),
       legacyHikBaseUrl: String(body.server?.legacyHikBaseUrl || state.server?.legacyHikBaseUrl || "").trim()
@@ -265,10 +266,11 @@ async function handleApi(req, res) {
   }
   if (req.method === "POST" && url.pathname === "/api/test-event") {
     const body = await readJson(req);
+    const macAddress = normalizeMacAddress(body.macAddress) || "02:00:00:00:00:01";
     const event = {
       source: "console-test",
-      deviceKey: body.macAddress || "local-camera-001",
-      macAddress: body.macAddress || "local-camera-001",
+      deviceKey: macAddress,
+      macAddress,
       ipAddress: body.ipAddress || "",
       channelId: body.channelId || 1,
       occurredAt: body.occurredAt,
@@ -514,7 +516,7 @@ function buildDeviceRecord(body) {
   const shopId = String(body.shopId || state.shop.shopId || "local-shop");
   const macAddress = normalizeMacAddress(body.macAddress || body.deviceIndexCode || body.deviceKey || body.deviceId);
   if (!macAddress) {
-    throw new Error("macAddress is required");
+    throw new Error("缺少有效 MAC 地址，不能保存摄像头");
   }
   const savePassword = body.savePassword ?? state.cameraDefaults?.savePassword;
   return {
@@ -586,7 +588,7 @@ async function ingestCollectorEvent(event) {
 
 function buildCollectorDeviceConfig(body) {
   const macAddress = normalizeMacAddress(body.macAddress || body.deviceIndexCode || body.deviceKey || body.deviceId);
-  if (!macAddress) throw new Error("macAddress is required");
+  if (!macAddress) throw new Error("缺少有效 MAC 地址，不能下发摄像头");
   return {
     ...body,
     macAddress,

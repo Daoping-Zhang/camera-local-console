@@ -39,7 +39,7 @@ function Copy-UpdateContent {
   }
 }
 
-$installRoot = Resolve-Path "$PSScriptRoot\.."
+$installRoot = Resolve-Path $PSScriptRoot
 $versionFile = Join-Path $installRoot "version.json"
 $current = Read-JsonFile -Path $versionFile
 $currentVersion = if ($current -and $current.version) { [string]$current.version } else { "0.0.0" }
