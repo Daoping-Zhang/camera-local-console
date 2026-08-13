@@ -23,7 +23,7 @@
 1. 打开下载页，下载 Windows 安装包。
 2. 解压到固定目录，例如 `D:\camera-local-console`。
 3. 首次调试可以双击 `start-all.cmd`。
-4. 确认功能正常后，右键以管理员身份运行 `install-service.cmd`。
+4. 确认功能正常后，右键以管理员身份运行 `enable-autostart.cmd`。
 5. 服务安装后会立即启动，控制台地址是 `http://127.0.0.1:3000`。
 
 如果只想启动服务、不打开浏览器，可以运行：
@@ -55,7 +55,7 @@ start-all.cmd /no-browser
 部署完成后，右键以管理员身份运行：
 
 ```bat
-install-service.cmd
+enable-autostart.cmd
 ```
 
 这会安装并启动 Windows 服务：
@@ -77,22 +77,21 @@ Windows 开机后自动启动
 ```bat
 start-service.cmd
 stop-service.cmd
+```
+
+工程兼容入口：
+
+```bat
+install-service.cmd
 uninstall-service.cmd
 ```
 
-兼容旧操作：
-
-```bat
-enable-autostart.cmd
-disable-autostart.cmd
-```
-
-`enable-autostart.cmd` 会转到 `install-service.cmd`，`disable-autostart.cmd` 会转到 `uninstall-service.cmd`。
+`install-service.cmd` 会转到 `enable-autostart.cmd`，`uninstall-service.cmd` 会转到 `disable-autostart.cmd`。
 
 取消自启动与自恢复时，右键以管理员身份运行：
 
 ```bat
-uninstall-service.cmd
+disable-autostart.cmd
 ```
 
 ## 在线更新
@@ -159,12 +158,12 @@ logs/
 start-all.cmd
 stop-all.cmd
 open-console.cmd
-install-service.cmd
 start-service.cmd
 stop-service.cmd
-uninstall-service.cmd
 enable-autostart.cmd
 disable-autostart.cmd
+install-service.cmd
+uninstall-service.cmd
 update.cmd
 version.json
 README-WINDOWS.txt

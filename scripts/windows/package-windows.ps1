@@ -304,18 +304,50 @@ pause
 @echo off
 setlocal
 cd /d "%~dp0"
-echo enable-autostart.cmd is kept for compatibility.
-echo Installing Windows Service instead...
-call "%~dp0install-service.cmd"
+if not exist "%~dp0CameraLocalConsoleService.exe" (
+  echo.
+  echo CameraLocalConsoleService.exe was not found.
+  echo Please include WinSW-x64.exe as CameraLocalConsoleService.exe when packaging.
+  echo.
+  pause
+  exit /b 1
+)
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$task='CameraLocalConsoleWatchdog'; if (Get-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue) { Unregister-ScheduledTask -TaskName $task -Confirm:$false; Write-Host ('Removed legacy scheduled task: ' + $task) }; $startup=[Environment]::GetFolderPath('Startup'); $shortcut=Join-Path $startup 'camera-local-console.lnk'; if (Test-Path -LiteralPath $shortcut) { Remove-Item -LiteralPath $shortcut -Force; Write-Host ('Removed legacy startup shortcut: ' + $shortcut) }"
+"%~dp0CameraLocalConsoleService.exe" install
+if errorlevel 1 (
+  echo.
+  echo Service install failed. Please run this file as Administrator.
+  echo.
+  pause
+  exit /b 1
+)
+"%~dp0CameraLocalConsoleService.exe" start
+if errorlevel 1 (
+  echo.
+  echo Service was installed, but start failed. Please check logs\service.
+  echo.
+  pause
+  exit /b 1
+)
+echo.
+echo Auto start enabled. Service installed and started.
+echo Console URL uses PORT in config\ports.env. Default: http://127.0.0.1:3000
+echo.
+pause
 '@ | Set-Content -Path (Join-Path $packageDir "enable-autostart.cmd") -Encoding ASCII
 
 @'
 @echo off
 setlocal
 cd /d "%~dp0"
-echo disable-autostart.cmd is kept for compatibility.
-echo Uninstalling Windows Service instead...
-call "%~dp0uninstall-service.cmd"
+if not exist "%~dp0CameraLocalConsoleService.exe" (
+  echo CameraLocalConsoleService.exe was not found.
+  pause
+  exit /b 1
+)
+"%~dp0CameraLocalConsoleService.exe" stop
+"%~dp0CameraLocalConsoleService.exe" uninstall
+pause
 '@ | Set-Content -Path (Join-Path $packageDir "disable-autostart.cmd") -Encoding ASCII
 
 @'
@@ -414,36 +446,9 @@ exit $LASTEXITCODE
 @echo off
 setlocal
 cd /d "%~dp0"
-if not exist "%~dp0CameraLocalConsoleService.exe" (
-  echo.
-  echo CameraLocalConsoleService.exe was not found.
-  echo Please include WinSW-x64.exe as CameraLocalConsoleService.exe when packaging.
-  echo.
-  pause
-  exit /b 1
-)
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$task='CameraLocalConsoleWatchdog'; if (Get-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue) { Unregister-ScheduledTask -TaskName $task -Confirm:$false; Write-Host ('Removed legacy scheduled task: ' + $task) }; $startup=[Environment]::GetFolderPath('Startup'); $shortcut=Join-Path $startup 'camera-local-console.lnk'; if (Test-Path -LiteralPath $shortcut) { Remove-Item -LiteralPath $shortcut -Force; Write-Host ('Removed legacy startup shortcut: ' + $shortcut) }"
-"%~dp0CameraLocalConsoleService.exe" install
-if errorlevel 1 (
-  echo.
-  echo Service install failed. Please run this file as Administrator.
-  echo.
-  pause
-  exit /b 1
-)
-"%~dp0CameraLocalConsoleService.exe" start
-if errorlevel 1 (
-  echo.
-  echo Service was installed, but start failed. Please check logs\service.
-  echo.
-  pause
-  exit /b 1
-)
-echo.
-echo Service installed and started.
-echo Console URL uses PORT in config\ports.env. Default: http://127.0.0.1:3000
-echo.
-pause
+echo install-service.cmd is kept for compatibility.
+echo Please use enable-autostart.cmd for field operation.
+call "%~dp0enable-autostart.cmd"
 '@ | Set-Content -Path (Join-Path $packageDir "install-service.cmd") -Encoding ASCII
 
 @'
@@ -476,14 +481,9 @@ pause
 @echo off
 setlocal
 cd /d "%~dp0"
-if not exist "%~dp0CameraLocalConsoleService.exe" (
-  echo CameraLocalConsoleService.exe was not found.
-  pause
-  exit /b 1
-)
-"%~dp0CameraLocalConsoleService.exe" stop
-"%~dp0CameraLocalConsoleService.exe" uninstall
-pause
+echo uninstall-service.cmd is kept for compatibility.
+echo Please use disable-autostart.cmd for field operation.
+call "%~dp0disable-autostart.cmd"
 '@ | Set-Content -Path (Join-Path $packageDir "uninstall-service.cmd") -Encoding ASCII
 
 @"
@@ -503,15 +503,15 @@ Update:
   update.cmd
 
 Auto start:
+  enable-autostart.cmd
+  disable-autostart.cmd
   install-service.cmd
   start-service.cmd
   stop-service.cmd
   uninstall-service.cmd
-  enable-autostart.cmd
-  disable-autostart.cmd
-  install-service.cmd installs and starts the Windows Service named CameraLocalConsole.
+  enable-autostart.cmd installs and starts the Windows Service named CameraLocalConsole.
   The service starts automatically when Windows boots and restarts itself after unexpected exits.
-  enable-autostart.cmd and disable-autostart.cmd are compatibility aliases.
+  install-service.cmd and uninstall-service.cmd are compatibility aliases.
 
 Ports:
   Default console:   http://127.0.0.1:3000

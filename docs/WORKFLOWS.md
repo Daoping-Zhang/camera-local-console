@@ -281,13 +281,13 @@ COLLECTOR_PORT=3100
 启用自启动与自恢复：
 
 ```bat
-install-service.cmd
+enable-autostart.cmd
 ```
 
 取消自启动与自恢复：
 
 ```bat
-uninstall-service.cmd
+disable-autostart.cmd
 ```
 
 启用后会安装并启动 Windows 服务：
@@ -307,7 +307,7 @@ CameraLocalConsole
 
 因此它不仅能处理电脑重启后的自动启动，也能处理 3000 进程意外退出后的自动恢复。
 
-`install-service.cmd` 需要右键以管理员身份运行，并且会自动启动服务；`start-service.cmd` 只用于服务已经安装但被手动停止后的维护场景。首次调试仍可双击 `start-all.cmd` 打开运行窗口和控制台页面。
+`enable-autostart.cmd` 需要右键以管理员身份运行，并且会自动安装并启动服务；`disable-autostart.cmd` 会停止并卸载服务。`start-service.cmd` 只用于服务已经安装但被手动停止后的维护场景。首次调试仍可双击 `start-all.cmd` 打开运行窗口和控制台页面。
 
 ## Windows 本机更新
 
