@@ -3,6 +3,7 @@ import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import zlib from "node:zlib";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, "..");
@@ -135,6 +136,7 @@ function importPackage(body) {
   if (!sourcePath || !fs.existsSync(sourcePath)) throw new Error("sourcePath not found");
   if (!version) throw new Error("version is required");
   if (!PLATFORMS.includes(platform)) throw new Error(`platform must be one of: ${PLATFORMS.join(", ")}`);
+  validatePackageVersion(sourcePath, version);
 
   const extension = safePackageExtension(sourcePath);
   const packageName = `camera-local-console-${platform}-${version}${extension}`;
@@ -318,6 +320,69 @@ function writeRegistry(registry) {
 
 function readJsonFile(file) {
   return JSON.parse(fs.readFileSync(file, "utf8"));
+}
+
+function validatePackageVersion(packagePath, expectedVersion) {
+  const metadata = readPackageMetadata(packagePath);
+  if (!metadata?.version) return;
+  if (String(metadata.version).trim() !== expectedVersion) {
+    throw new Error(`安装包内 version.json 版本为 ${metadata.version}，与填写版本 ${expectedVersion} 不一致，请重新打包或修改版本号。`);
+  }
+}
+
+function readPackageMetadata(packagePath) {
+  if (!String(packagePath).toLowerCase().endsWith(".zip")) return null;
+  try {
+    const content = fs.readFileSync(packagePath);
+    const entry = readZipEntry(content, "version.json");
+    if (!entry) return null;
+    return JSON.parse(entry.toString("utf8").replace(/^\uFEFF/, ""));
+  } catch (error) {
+    throw new Error(`读取安装包版本信息失败：${error.message}`);
+  }
+}
+
+function readZipEntry(buffer, wantedName) {
+  const eocdOffset = findEndOfCentralDirectory(buffer);
+  if (eocdOffset < 0) throw new Error("zip central directory not found");
+  const centralDirectorySize = buffer.readUInt32LE(eocdOffset + 12);
+  const centralDirectoryOffset = buffer.readUInt32LE(eocdOffset + 16);
+  let offset = centralDirectoryOffset;
+  const end = centralDirectoryOffset + centralDirectorySize;
+  while (offset < end) {
+    if (buffer.readUInt32LE(offset) !== 0x02014b50) break;
+    const compressionMethod = buffer.readUInt16LE(offset + 10);
+    const compressedSize = buffer.readUInt32LE(offset + 20);
+    const fileNameLength = buffer.readUInt16LE(offset + 28);
+    const extraLength = buffer.readUInt16LE(offset + 30);
+    const commentLength = buffer.readUInt16LE(offset + 32);
+    const localHeaderOffset = buffer.readUInt32LE(offset + 42);
+    const name = buffer.subarray(offset + 46, offset + 46 + fileNameLength).toString("utf8").replaceAll("\\", "/");
+    if (name === wantedName || name.endsWith(`/${wantedName}`)) {
+      return readZipLocalEntry(buffer, localHeaderOffset, compressedSize, compressionMethod);
+    }
+    offset += 46 + fileNameLength + extraLength + commentLength;
+  }
+  return null;
+}
+
+function readZipLocalEntry(buffer, localHeaderOffset, compressedSize, compressionMethod) {
+  if (buffer.readUInt32LE(localHeaderOffset) !== 0x04034b50) throw new Error("invalid zip local header");
+  const fileNameLength = buffer.readUInt16LE(localHeaderOffset + 26);
+  const extraLength = buffer.readUInt16LE(localHeaderOffset + 28);
+  const dataStart = localHeaderOffset + 30 + fileNameLength + extraLength;
+  const data = buffer.subarray(dataStart, dataStart + compressedSize);
+  if (compressionMethod === 0) return data;
+  if (compressionMethod === 8) return zlib.inflateRawSync(data);
+  throw new Error(`unsupported zip compression method: ${compressionMethod}`);
+}
+
+function findEndOfCentralDirectory(buffer) {
+  const minOffset = Math.max(0, buffer.length - 22 - 0xffff);
+  for (let offset = buffer.length - 22; offset >= minOffset; offset -= 1) {
+    if (buffer.readUInt32LE(offset) === 0x06054b50) return offset;
+  }
+  return -1;
 }
 
 function readPackageVersion() {
@@ -540,9 +605,11 @@ function escapeHtml(value) {
 
 function downloadHtml() {
   const channels = Object.fromEntries(CHANNELS.map((channel) => [channel, readChannel(channel)]));
-  const stable = channels.stable || channels.beta || channels.canary;
-  const title = stable ? `当前版本 ${stable.version}` : "暂无可下载版本";
+  const recommendedChannel = channels.stable ? "stable" : (channels.beta ? "beta" : (channels.canary ? "canary" : ""));
+  const recommended = recommendedChannel ? channels[recommendedChannel] : null;
+  const title = recommended ? `推荐版本 ${recommended.version}` : "暂无可下载版本";
   const cards = CHANNELS.map((channel) => channelCard(channel, channels[channel])).join("");
+  const recommendedManifestUrl = recommendedChannel ? `${BASE_URL}/channels/${recommendedChannel}.json` : "";
   return `<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -551,32 +618,50 @@ function downloadHtml() {
   <title>摄像头本地控制台下载</title>
   <style>
     body{font-family:Arial,"Microsoft YaHei",sans-serif;margin:0;background:#f5f7fb;color:#111827}
-    header{padding:28px;background:#0f172a;color:white}
-    main{padding:24px;display:grid;gap:16px;max-width:980px;margin:0 auto}
-    h1,h2,p{margin:0}
+    header{padding:30px 24px;background:#0f172a;color:white}
+    main{padding:24px;display:grid;gap:18px;max-width:1040px;margin:0 auto}
+    h1,h2,h3,p{margin:0}
     .hero{display:grid;gap:8px}
     .hero p{color:#cbd5e1}
     .card{background:white;border:1px solid #d8dee9;border-radius:10px;padding:18px;display:grid;gap:12px}
+    .featured{grid-template-columns:1fr auto;align-items:center}
+    .featured-title{display:grid;gap:8px}
+    .channel-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:12px}
+    .channel-card{border-left:4px solid #94a3b8}
+    .channel-card.active{border-left-color:#047857}
     .install-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
     .install-box{border:1px solid #e5e7eb;border-radius:8px;padding:14px;display:grid;gap:8px}
     .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
     .muted{color:#64748b}
+    .version{font-size:26px;font-weight:800}
     .pill{padding:4px 8px;border-radius:999px;background:#eef2ff;color:#3730a3;font-weight:700;font-size:12px}
     .button{display:inline-block;padding:10px 14px;border-radius:8px;background:#047857;color:white;text-decoration:none;font-weight:700}
     .secondary{background:white;color:#344054;border:1px solid #cbd5e1}
     code{background:#f1f5f9;padding:2px 6px;border-radius:5px;overflow-wrap:anywhere}
     pre{white-space:pre-wrap;background:#0f172a;color:#dbeafe;padding:12px;border-radius:8px;overflow:auto}
+    @media (max-width:720px){.featured{grid-template-columns:1fr}.button{width:max-content}}
   </style>
 </head>
 <body>
   <header>
     <div class="hero">
       <h1>摄像头本地控制台</h1>
-      <p>${escapeHtml(title)}。下载压缩包后解压，运行 start-all.cmd 即可启动。</p>
+      <p>${escapeHtml(title)}。Windows 客户下载 zip 后解压，运行 start-all.cmd 即可启动。</p>
     </div>
   </header>
   <main>
-    ${cards || `<section class="card"><h2>暂无发布包</h2><p class="muted">请先在版本发布管理台导入包，并发布到 stable、beta 或 canary。</p></section>`}
+    ${recommended ? `<section class="card featured">
+      <div class="featured-title">
+        <div class="row"><h2>推荐下载</h2><span class="pill">${escapeHtml(channelName(recommendedChannel))}</span><span class="pill">${escapeHtml(recommended.platform || "unknown")}</span></div>
+        <div class="version">${escapeHtml(recommended.version || "-")}</div>
+        <p class="muted">${escapeHtml(recommended.notes || "暂无更新说明")}</p>
+      </div>
+      <div class="row">
+        <a class="button" href="${escapeHtml(recommended.url || "#")}">下载 Windows 安装包</a>
+        <a class="button secondary" href="${escapeHtml(recommendedManifestUrl)}">查看更新清单</a>
+      </div>
+    </section>` : `<section class="card"><h2>暂无发布包</h2><p class="muted">请先在版本发布管理台导入包，并发布到 stable、beta 或 canary。</p></section>`}
+    <section class="channel-grid">${cards}</section>
     <section class="card">
       <h2>安装说明</h2>
       <div class="install-grid">
@@ -599,11 +684,11 @@ function downloadHtml() {
 
 function channelCard(channel, manifest) {
   if (!manifest) {
-    return `<section class="card"><div class="row"><h2>${escapeHtml(channelName(channel))}</h2><span class="pill">未发布</span></div><p class="muted">该通道暂无版本。</p></section>`;
+    return `<div class="card channel-card"><div class="row"><h3>${escapeHtml(channelName(channel))}</h3><span class="pill">未发布</span></div><p class="muted">该通道暂无版本。</p></div>`;
   }
   const manifestUrl = `${BASE_URL}/channels/${channel}.json`;
-  return `<section class="card">
-    <div class="row"><h2>${escapeHtml(channelName(channel))}</h2><span class="pill">${escapeHtml(manifest.platform || "unknown")}</span></div>
+  return `<div class="card channel-card active">
+    <div class="row"><h3>${escapeHtml(channelName(channel))}</h3><span class="pill">已发布</span><span class="pill">${escapeHtml(manifest.platform || "unknown")}</span></div>
     <p><strong>版本：</strong>${escapeHtml(manifest.version || "-")}</p>
     <p><strong>更新说明：</strong>${escapeHtml(manifest.notes || "暂无说明")}</p>
     <div class="row">
@@ -611,7 +696,7 @@ function channelCard(channel, manifest) {
       <a class="button secondary" href="${escapeHtml(manifestUrl)}">查看更新清单</a>
     </div>
     <p class="muted">SHA256：<code>${escapeHtml(manifest.sha256 || "-")}</code></p>
-  </section>`;
+  </div>`;
 }
 
 function channelName(channel) {
@@ -714,7 +799,11 @@ function pageHtml() {
     .channel-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px}
     .channel-card{border:1px solid #e5e7eb;border-left:4px solid #94a3b8;border-radius:8px;padding:14px;display:grid;gap:8px}
     .channel-card.active{border-left-color:#047857;background:#f3fbf7}
+    .channel-top{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+    .channel-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:4px}
     .pill{display:inline-flex;width:max-content;padding:4px 8px;border-radius:999px;background:#eef2ff;color:#3730a3;font-size:12px;font-weight:700}
+    .pill.ok{background:#ecfdf3;color:#027a48}
+    .pill.warn{background:#fef3f2;color:#b42318}
     .table-wrap{overflow:auto}
     table{width:100%;border-collapse:collapse;font-size:13px}
     th,td{border-bottom:1px solid #e5e7eb;padding:9px;text-align:left;vertical-align:top}
@@ -762,7 +851,7 @@ function pageHtml() {
     </section>
     <section>
       <h2>导入发布包</h2>
-      <p class="muted">优先直接选择安装包上传；如果安装包已经在服务器上，也可以用服务器本地路径导入。</p>
+      <p class="muted">优先直接选择安装包上传；同版本同平台只允许一个安装包。已发布版本需要先撤回通道后才能覆盖，安装包内 version.json 必须和这里填写的版本一致。</p>
       <div class="grid">
         <label>上传安装包<input id="packageFile" type="file" accept=".zip,.gz,.tar,.tgz,application/zip,application/gzip"></label>
         <label>版本号<input id="version" placeholder="0.1.1"><span id="versionHelp" class="field-help"></span></label>
@@ -813,9 +902,9 @@ function pageHtml() {
     function renderChannels() {
       document.getElementById("channels").innerHTML = '<div class="channel-grid">' + Object.entries(appState.channels).map(([name, manifest]) => {
         if (!manifest) {
-          return '<div class="channel-card"><h3>' + channelName(name) + '</h3><span class="pill">未发布</span><p class="muted">暂无版本</p></div>';
+          return '<div class="channel-card"><div class="channel-top"><h3>' + channelName(name) + '</h3><span class="pill">未发布</span></div><p class="muted">暂无版本。可在下方安装包列表选择版本发布到该通道。</p></div>';
         }
-        return '<div class="channel-card active"><h3>' + channelName(name) + '</h3><span class="pill">' + escapeHtml(manifest.platform || '-') + '</span><p><strong>版本：</strong>' + escapeHtml(manifest.version || '-') + '</p><p class="muted">' + escapeHtml(manifest.notes || '暂无更新说明') + '</p><p class="row"><a class="button secondary" href="' + escapeHtml(appState.baseUrl + '/channels/' + name + '.json') + '" target="_blank" rel="noopener">查看清单</a><button class="warn" onclick="revokeChannel(\\'' + name + '\\')">撤回通道</button></p></div>';
+        return '<div class="channel-card active"><div class="channel-top"><div><h3>' + channelName(name) + '</h3><p class="muted">' + escapeHtml(manifest.platform || '-') + '</p></div><span class="pill ok">已发布</span></div><p><strong>版本：</strong>' + escapeHtml(manifest.version || '-') + '</p><p class="muted">' + escapeHtml(manifest.notes || '暂无更新说明') + '</p><div class="channel-actions"><a class="button secondary" href="' + escapeHtml(appState.baseUrl + '/channels/' + name + '.json') + '" target="_blank" rel="noopener">查看清单</a><button class="warn" onclick="revokeChannel(\\'' + name + '\\')">撤回该通道</button></div></div>';
       }).join("") + '</div>';
     }
     function renderPackages() {
@@ -829,7 +918,8 @@ function pageHtml() {
         const overwriteText = pkg.overwrittenAt ? '<p class="muted">覆盖于：' + escapeHtml(pkg.overwrittenAt) + '</p>' : '';
         const actions = ["canary","beta","stable"].map(c => '<button onclick="promote(\\'' + c + '\\',\\'' + escapeHtml(pkg.version) + '\\',\\'' + escapeHtml(pkg.platform) + '\\')">发布到 ' + c + '</button>').join(' ') +
           '<button class="secondary" onclick="deletePackage(\\'' + escapeHtml(pkg.version) + '\\',\\'' + escapeHtml(pkg.platform) + '\\')" ' + (canDelete ? '' : 'disabled title="请先从通道撤回"') + '>删除</button>';
-        return '<tr><td><strong>' + escapeHtml(pkg.version) + '</strong><p class="muted">' + escapeHtml(statusName(pkg.status)) + '</p>' + overwriteText + '</td><td>' + escapeHtml(pkg.platform) + '</td><td>' + escapeHtml(channels) + '</td><td><code>' + escapeHtml(pkg.sha256) + '</code></td><td>' + escapeHtml(pkg.notes || '暂无说明') + '</td><td><div class="row">' + actions + '</div></td></tr>';
+        const deleteHint = canDelete ? '' : '<p class="muted">删除或覆盖前，请先在上方撤回通道。</p>';
+        return '<tr><td><strong>' + escapeHtml(pkg.version) + '</strong><p class="muted">' + escapeHtml(statusName(pkg.status)) + '</p>' + overwriteText + '</td><td>' + escapeHtml(pkg.platform) + '</td><td>' + escapeHtml(channels) + '</td><td><code>' + escapeHtml(pkg.sha256) + '</code></td><td>' + escapeHtml(pkg.notes || '暂无说明') + '</td><td><div class="row">' + actions + '</div>' + deleteHint + '</td></tr>';
       }).join("");
       document.getElementById("packages").innerHTML = '<div class="table-wrap"><table><thead><tr><th>版本</th><th>平台</th><th>当前通道</th><th>SHA256</th><th>更新说明</th><th>操作</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
     }
@@ -939,7 +1029,7 @@ function pageHtml() {
       return { draft: "未发布", published: "已发布", revoked: "已撤回", deleted: "已删除" }[status] || status || "未发布";
     }
     function actionName(action) {
-      return { promote: "发布", revoke: "撤回", delete: "删除" }[action] || action || "操作";
+      return { promote: "发布", revoke: "撤回", delete: "删除", overwrite: "覆盖" }[action] || action || "操作";
     }
     function escapeHtml(value) {
       return String(value ?? "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#039;");
