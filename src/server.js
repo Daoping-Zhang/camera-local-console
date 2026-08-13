@@ -532,6 +532,7 @@ function buildDeviceRecord(body) {
     deviceName: body.deviceName || `Camera ${body.ipAddress || macAddress}`,
     username: body.username || body.sdk?.username || state.cameraDefaults?.username || "admin",
     password: savePassword ? (body.password || body.sdk?.password || "") : "",
+    sdkVendor: body.sdkVendor || body.vendor || body.sdk?.vendor || "hikvision-real",
     sdkPort: Number(body.sdkPort || body.sdk?.port || state.cameraDefaults?.sdkPort || 8000),
     savePassword: Boolean(savePassword),
     city: body.city || "",
@@ -597,7 +598,7 @@ function buildCollectorDeviceConfig(body) {
     deviceId: macAddress,
     gatewayUrl: body.gatewayUrl || `http://${HOST}:${PORT}`,
     sdk: {
-      vendor: body.sdk?.vendor || body.vendor || "hikvision-real",
+      vendor: body.sdk?.vendor || body.sdkVendor || body.vendor || "hikvision-real",
       port: Number(body.sdk?.port || body.sdkPort || body.port || 8000),
       username: body.sdk?.username || body.username || "",
       password: body.sdk?.password || body.password || ""
@@ -1003,34 +1004,45 @@ function startLocalUpdate(manifestUrl, channel) {
   if (process.platform !== "win32") {
     throw new Error("当前本机更新仅支持 Windows 安装包。Linux ARM64 / RK3566 请使用镜像更新脚本。");
   }
-  const installRoot = path.resolve(__dirname, "..");
-  const packagedUpdateCmd = path.join(installRoot, "update.cmd");
-  const sourceUpdateScript = path.join(installRoot, "scripts", "windows", "update-windows.ps1");
-  let command;
-  let args;
-  if (fs.existsSync(packagedUpdateCmd)) {
-    command = "cmd.exe";
-    args = ["/c", "start", "camera-console-update", packagedUpdateCmd, "-ManifestUrl", url];
-  } else if (fs.existsSync(sourceUpdateScript)) {
-    command = "powershell.exe";
-    args = ["-ExecutionPolicy", "Bypass", "-File", sourceUpdateScript, "-ManifestUrl", url];
-  } else {
-    throw new Error("未找到 update.cmd 或 scripts/windows/update-windows.ps1，无法执行本机更新。");
+  const installRoot = resolveInstallRoot();
+  const runnerScript = path.join(installRoot, "app", "scripts", "runtime", "update-runner.js");
+  const sourceRunnerScript = path.join(installRoot, "scripts", "runtime", "update-runner.js");
+  const scriptPath = fs.existsSync(runnerScript) ? runnerScript : sourceRunnerScript;
+  if (!fs.existsSync(scriptPath)) {
+    throw new Error("未找到更新进度 runner，无法执行本机更新。");
   }
-  const child = spawn(command, args, {
+  const runnerPort = Number(process.env.UPDATE_RUNNER_PORT || 3219);
+  const progressUrl = `http://127.0.0.1:${runnerPort}/`;
+  const child = spawn(process.execPath, [scriptPath], {
     cwd: installRoot,
+    env: {
+      ...process.env,
+      INSTALL_ROOT: installRoot,
+      MANIFEST_URL: url,
+      CHANNEL: channel || state.release?.channel || "stable",
+      CONSOLE_URL: `http://${HOST}:${PORT}`,
+      UPDATE_RUNNER_PORT: String(runnerPort)
+    },
     detached: true,
     stdio: "ignore",
     windowsHide: false
   });
   child.unref();
-  logger.info("local update started", { manifestUrl: url, command });
+  logger.info("local update runner started", { manifestUrl: url, progressUrl });
   return {
     started: true,
     platform: process.platform,
     manifestUrl: url,
-    message: "已启动本机更新。更新过程会停止当前控制台，页面短暂断开属于正常现象。"
+    progressUrl,
+    message: "已进入更新进度页。更新过程会停止当前控制台，页面短暂断开属于正常现象。"
   };
+}
+
+function resolveInstallRoot() {
+  const appRoot = path.resolve(__dirname, "..");
+  const packagedRoot = path.resolve(appRoot, "..");
+  if (fs.existsSync(path.join(packagedRoot, "start-all.cmd"))) return packagedRoot;
+  return appRoot;
 }
 
 async function serveStatic(req, res) {

@@ -14,6 +14,7 @@ let gatewayUrl = (process.env.GATEWAY_URL || "").replace(/\/+$/, "");
 const devices = new Map();
 const workers = new Map();
 const deviceFingerprints = new Map();
+const retryState = new Map();
 const logs = [];
 let lastHeartbeatAt = "";
 let lastEventAt = "";
@@ -95,6 +96,7 @@ server.on("error", (error) => {
 });
 
 setInterval(sendHeartbeat, Number(process.env.HEARTBEAT_INTERVAL_MS || 10000));
+setInterval(processDeviceRetries, Number(process.env.RETRY_TICK_MS || 5000));
 if (adapterMode !== "hikvision") {
   setInterval(() => sendEvent(firstDeviceKey()).catch((error) => console.error("event failed", error.message)), Number(process.env.INTERVAL_MS || 15000));
 }
@@ -165,7 +167,8 @@ async function applyRuntimeSnapshot(snapshot) {
       device = normalizeDevice(item);
       nextKeys.add(device.deviceKey);
       const fingerprint = deviceFingerprint(device);
-      if (deviceFingerprints.get(device.deviceKey) === fingerprint && devices.has(device.deviceKey)) {
+      const existingRetry = retryState.get(device.deviceKey);
+      if (deviceFingerprints.get(device.deviceKey) === fingerprint && devices.has(device.deviceKey) && !isRetryDue(existingRetry)) {
         result.unchanged += 1;
         continue;
       }
@@ -191,10 +194,13 @@ async function applyRuntimeSnapshot(snapshot) {
         result.skipped += 1;
         continue;
       }
-      const connected = await connectCamera(device);
-      devices.set(device.deviceKey, connected);
       deviceFingerprints.set(device.deviceKey, fingerprint);
-      result.applied += 1;
+      const connected = await tryConnectCamera(device, { resetRetry: !existingRetry });
+      if (connected.connectionStatus === "retry-waiting") {
+        result.skipped += 1;
+      } else {
+        result.applied += 1;
+      }
     } catch (error) {
       result.errors.push({ deviceKey: device?.deviceKey || item.deviceKey || item.macAddress || item.ipAddress || "", error: error.message });
       writeLog("error", "snapshot device apply failed", { deviceKey: device?.deviceKey, error: error.message });
@@ -206,6 +212,7 @@ async function applyRuntimeSnapshot(snapshot) {
     stopWorker(deviceKey);
     devices.delete(deviceKey);
     deviceFingerprints.delete(deviceKey);
+    retryState.delete(deviceKey);
     result.removed += 1;
   }
 
@@ -243,6 +250,74 @@ function publicDevice(device) {
 
 function adapterName() {
   return adapterMode === "hikvision" ? "hikvision-hcnetsdk" : "fake-http-collector";
+}
+
+async function tryConnectCamera(device, options = {}) {
+  try {
+    if (options.resetRetry) retryState.delete(device.deviceKey);
+    const connected = await connectCamera(device);
+    retryState.delete(device.deviceKey);
+    devices.set(device.deviceKey, connected);
+    return connected;
+  } catch (error) {
+    return markDeviceRetry(device, error.message);
+  }
+}
+
+function markDeviceRetry(device, error) {
+  const previous = retryState.get(device.deviceKey) || { retryCount: 0 };
+  const retryCount = previous.retryCount + 1;
+  const retryDelayMs = retryDelayFor(retryCount);
+  const nextRetryAt = new Date(Date.now() + retryDelayMs).toISOString();
+  const next = {
+    ...device,
+    status: "offline",
+    connectionStatus: isRetryableError(error) ? "retry-waiting" : "error",
+    lastError: friendlyConnectError(error),
+    retryCount,
+    nextRetryAt,
+    lastAttemptAt: new Date().toISOString()
+  };
+  devices.set(device.deviceKey, next);
+  retryState.set(device.deviceKey, { retryCount, nextRetryAt, lastError: error });
+  writeLog("warn", "camera connection scheduled retry", { deviceKey: device.deviceKey, ipAddress: device.ipAddress, retryCount, nextRetryAt, error: next.lastError });
+  sendHeartbeat().catch((heartbeatError) => writeLog("warn", "heartbeat after retry schedule failed", { error: heartbeatError.message }));
+  return next;
+}
+
+function retryDelayFor(retryCount) {
+  const schedule = [10_000, 30_000, 60_000, 120_000];
+  return schedule[Math.min(retryCount - 1, schedule.length - 1)];
+}
+
+function isRetryDue(state) {
+  return Boolean(state?.nextRetryAt && Date.parse(state.nextRetryAt) <= Date.now());
+}
+
+function isRetryableError(error) {
+  const text = String(error || "").toLowerCase();
+  if (text.includes("password") || text.includes("unauthorized") || text.includes("authentication")) return false;
+  return true;
+}
+
+function friendlyConnectError(error) {
+  const text = String(error || "");
+  if (text.toLowerCase().includes("password")) return "摄像头账号或密码缺失/错误，请在 3000 控制台重新下发";
+  if (text.toLowerCase().includes("sdk")) return `SDK 启动失败：${text}`;
+  return `连接失败，等待网络或摄像头就绪后自动重试：${text}`;
+}
+
+async function processDeviceRetries() {
+  for (const [deviceKey, retry] of Array.from(retryState.entries())) {
+    if (!isRetryDue(retry)) continue;
+    const device = devices.get(deviceKey);
+    if (!device || device.connectionStatus === "needs-password") {
+      retryState.delete(deviceKey);
+      continue;
+    }
+    writeLog("info", "camera retry started", { deviceKey, retryCount: retry.retryCount });
+    await tryConnectCamera({ ...device, status: "pending", connectionStatus: "retrying" });
+  }
 }
 
 async function connectCamera(device) {
@@ -315,7 +390,7 @@ function startHikvisionWorker(device) {
     }
     const saved = devices.get(device.deviceKey);
     if (saved) {
-      devices.set(device.deviceKey, { ...saved, status: "offline", connectionStatus: "error", lastError: error.message });
+      markDeviceRetry({ ...saved, sdk: device.sdk }, error.message);
     }
     writeLog("error", "hikvision worker start failed", { deviceKey: device.deviceKey, error: error.message, pythonPath, sdkDir });
     sendHeartbeat().catch((heartbeatError) => writeLog("warn", "heartbeat after worker error failed", { error: heartbeatError.message }));
@@ -328,7 +403,11 @@ function startHikvisionWorker(device) {
     }
     const saved = devices.get(device.deviceKey);
     if (saved) {
-      devices.set(device.deviceKey, { ...saved, status: "offline", connectionStatus: "stopped", lastError: current?.lastError || "" });
+      if (code === 0) {
+        devices.set(device.deviceKey, { ...saved, status: "offline", connectionStatus: "stopped", lastError: "" });
+      } else {
+        markDeviceRetry({ ...saved, sdk: device.sdk }, current?.lastError || `exit code ${code ?? "null"}, signal ${signal ?? "null"}`);
+      }
       sendHeartbeat().catch((error) => writeLog("warn", "heartbeat after worker exit failed", { error: error.message }));
     }
     writeLog(code === 0 ? "info" : "error", "hikvision worker exited", { deviceKey: device.deviceKey, code, signal });
@@ -394,6 +473,9 @@ async function sendHeartbeat() {
       status: device.status,
       connectionStatus: device.connectionStatus,
       lastError: device.lastError || workers.get(device.deviceKey)?.lastError || "",
+      retryCount: device.retryCount || 0,
+      nextRetryAt: device.nextRetryAt || "",
+      lastAttemptAt: device.lastAttemptAt || "",
       worker: workers.get(device.deviceKey) ? {
         status: workers.get(device.deviceKey).status,
         lastError: workers.get(device.deviceKey).lastError

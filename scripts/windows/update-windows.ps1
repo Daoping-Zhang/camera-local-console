@@ -1,6 +1,8 @@
 param(
   [string]$ManifestUrl = "",
   [string]$Channel = "",
+  [ValidateSet("Normal", "NoBrowser", "None")]
+  [string]$RestartMode = "Normal",
   [switch]$CheckOnly
 )
 
@@ -119,9 +121,12 @@ Copy-UpdateContent -SourceRoot $packageRoot.FullName -TargetRoot $installRoot
 
 Write-Host "Update completed. Backup: $backupPath"
 $startCmd = Join-Path $installRoot "start-all.cmd"
-if (Test-Path -LiteralPath $startCmd) {
+if ($RestartMode -eq "None") {
+  Write-Host "Restart skipped."
+} elseif (Test-Path -LiteralPath $startCmd) {
   Write-Host "Restarting camera console..."
-  Start-Process -FilePath $startCmd -WorkingDirectory $installRoot
+  $arguments = if ($RestartMode -eq "NoBrowser") { "/minimized /no-browser" } else { "" }
+  Start-Process -FilePath $startCmd -ArgumentList $arguments -WorkingDirectory $installRoot
 } else {
   Write-Host "start-all.cmd was not found. Please start the console manually."
 }

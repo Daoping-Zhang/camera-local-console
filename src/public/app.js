@@ -428,6 +428,9 @@ async function applyReleaseUpdate(manifestUrl, channel) {
     })
   });
   setText("releaseState", data.result?.message || "已启动本机更新");
+  if (data.result?.progressUrl) {
+    window.location.href = data.result.progressUrl;
+  }
 }
 
 function renderInterfaces(interfaces) {
@@ -644,6 +647,8 @@ function hasMatchingDeviceKey(keys, item) {
 function collectorDeviceStatus(item) {
   const error = item.lastError || item.worker?.lastError || "";
   const status = item.worker?.status || item.connectionStatus || item.status || "";
+  if (status === "retry-waiting") return { label: "等待重试", className: "warn", detail: `${error || "连接失败，等待自动重试"}${item.nextRetryAt ? `；下次 ${formatRelative(item.nextRetryAt)}` : ""}` };
+  if (status === "retrying") return { label: "正在重试", className: "reachable", detail: error || "正在重新连接摄像头" };
   if (error) return { label: "异常", className: "error", detail: error };
   if (status === "running" || status === "connected" || item.status === "online") return { label: "在线", className: "online", detail: "本地采集器已登录 SDK" };
   return { label: status || "已下发", className: "reachable", detail: "本地采集器已接收，等待 SDK 状态更新" };
@@ -998,6 +1003,9 @@ function workerStatusText(status) {
   return {
     running: "运行中",
     connected: "已连接",
+    "retry-waiting": "等待重试",
+    retrying: "正在重试",
+    "needs-password": "缺少密码",
     pending: "等待中",
     starting: "启动中",
     stopped: "已停止",
