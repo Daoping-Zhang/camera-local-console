@@ -191,7 +191,7 @@ $resolvedWinSW = Resolve-OptionalPath @(
 if ($resolvedWinSW) {
   Copy-Item -LiteralPath $resolvedWinSW -Destination (Join-Path $packageDir "CameraLocalConsoleService.exe") -Force
 } else {
-  Write-Warning "WinSW service wrapper was not copied. Put WinSW-x64.exe under vendor\winsw or pass -WinSWExe. install-service.cmd will not work without it."
+  Write-Warning "Windows service wrapper was not copied. Put WinSW-x64.exe under vendor\winsw or pass -WinSWExe. enable-autostart.cmd will not work without it."
 }
 
 @'
@@ -446,15 +446,6 @@ exit $LASTEXITCODE
 @echo off
 setlocal
 cd /d "%~dp0"
-echo install-service.cmd is kept for compatibility.
-echo Please use enable-autostart.cmd for field operation.
-call "%~dp0enable-autostart.cmd"
-'@ | Set-Content -Path (Join-Path $packageDir "install-service.cmd") -Encoding ASCII
-
-@'
-@echo off
-setlocal
-cd /d "%~dp0"
 if not exist "%~dp0CameraLocalConsoleService.exe" (
   echo CameraLocalConsoleService.exe was not found.
   pause
@@ -477,15 +468,6 @@ if not exist "%~dp0CameraLocalConsoleService.exe" (
 pause
 '@ | Set-Content -Path (Join-Path $packageDir "stop-service.cmd") -Encoding ASCII
 
-@'
-@echo off
-setlocal
-cd /d "%~dp0"
-echo uninstall-service.cmd is kept for compatibility.
-echo Please use disable-autostart.cmd for field operation.
-call "%~dp0disable-autostart.cmd"
-'@ | Set-Content -Path (Join-Path $packageDir "uninstall-service.cmd") -Encoding ASCII
-
 @"
 camera-local-console Windows package
 
@@ -505,13 +487,10 @@ Update:
 Auto start:
   enable-autostart.cmd
   disable-autostart.cmd
-  install-service.cmd
   start-service.cmd
   stop-service.cmd
-  uninstall-service.cmd
   enable-autostart.cmd installs and starts the Windows Service named CameraLocalConsole.
   The service starts automatically when Windows boots and restarts itself after unexpected exits.
-  install-service.cmd and uninstall-service.cmd are compatibility aliases.
 
 Ports:
   Default console:   http://127.0.0.1:3000

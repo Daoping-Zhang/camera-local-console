@@ -79,15 +79,6 @@ start-service.cmd
 stop-service.cmd
 ```
 
-工程兼容入口：
-
-```bat
-install-service.cmd
-uninstall-service.cmd
-```
-
-`install-service.cmd` 会转到 `enable-autostart.cmd`，`uninstall-service.cmd` 会转到 `disable-autostart.cmd`。
-
 取消自启动与自恢复时，右键以管理员身份运行：
 
 ```bat
@@ -122,17 +113,21 @@ config/
 powershell -ExecutionPolicy Bypass -File scripts/windows/package-windows.ps1 -Version 0.1.1
 ```
 
-如果需要把 Windows 服务能力打进安装包，需要提供 WinSW：
+Windows 后台服务依赖一个服务包装器 `WinSW-x64.exe`。它的作用是把本项目的 Node 程序注册成 Windows 服务，让它可以开机自启、后台运行和异常重启。
+
+打包时有两种方式提供这个文件。推荐提前放到：
+
+```text
+vendor\winsw\WinSW-x64.exe
+```
+
+也可以在打包命令中临时指定它的位置：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/windows/package-windows.ps1 -Version 0.1.1 -WinSWExe D:\tools\WinSW-x64.exe
 ```
 
-也可以提前放到：
-
-```text
-vendor\winsw\WinSW-x64.exe
-```
+这里的 `D:\tools\WinSW-x64.exe` 只是示例路径，实际换成打包电脑上 `WinSW-x64.exe` 所在的位置。
 
 只生成目录、不生成 zip：
 
@@ -162,8 +157,6 @@ start-service.cmd
 stop-service.cmd
 enable-autostart.cmd
 disable-autostart.cmd
-install-service.cmd
-uninstall-service.cmd
 update.cmd
 version.json
 README-WINDOWS.txt
