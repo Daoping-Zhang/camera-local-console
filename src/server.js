@@ -102,7 +102,11 @@ async function handleApi(req, res) {
   }
   if (req.method === "POST" && url.pathname === "/api/collector-proxy/register-device") {
     const body = await readJson(req);
-    const result = await collectorPost(body.collectorUrl, "/api/devices/register", buildCollectorDeviceConfig(body.device || {}));
+    const collectorUrl = body.collectorUrl || state.localCollector?.baseUrl;
+    const result = await collectorPost(collectorUrl, "/api/devices/register", buildCollectorDeviceConfig(body.device || {}));
+    await refreshCollectorSnapshot(collectorUrl, result).catch((error) => {
+      logger.warn("collector snapshot refresh failed after register", { error: error.message });
+    });
     sendJson(res, 200, { ok: true, result });
     return;
   }
@@ -276,6 +280,9 @@ async function registerDeviceFlow(body) {
   steps.push({ name: "collector-register", status: "running" });
   const collector = await collectorPost(collectorUrl, "/api/devices/register", device);
   steps[steps.length - 1] = { name: "collector-register", status: "success", result: collector };
+  await refreshCollectorSnapshot(collectorUrl, collector).catch((error) => {
+    logger.warn("collector snapshot refresh failed after register flow", { error: error.message });
+  });
 
   steps.push({ name: "local-device-record", status: "running" });
   const record = buildDeviceRecord(device);
@@ -598,6 +605,17 @@ function discoverCollector(result, collectorUrl) {
     lastSeenAt: new Date().toISOString(),
     status: existing.lastHeartbeatAt ? "online" : "reachable"
   });
+}
+
+async function refreshCollectorSnapshot(collectorUrl, fallbackResult) {
+  if (!collectorUrl) return;
+  try {
+    const health = await collectorGet(collectorUrl, "/api/health");
+    discoverCollector(health, collectorUrl);
+  } catch (error) {
+    if (fallbackResult) discoverCollector({ collector: { ...fallbackResult, devices: fallbackResult.device ? [fallbackResult.device] : [] } }, collectorUrl);
+    throw error;
+  }
 }
 
 function touchCollectorFromEvent(event) {

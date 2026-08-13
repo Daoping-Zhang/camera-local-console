@@ -612,6 +612,9 @@ function pageHtml() {
     .status{min-height:20px;color:#047857;font-weight:700}
     .field-help{color:#64748b;font-size:12px}
     .link-button{height:auto;min-height:0;padding:0;border:0;background:transparent;color:#047857}
+    .progress{display:none;width:100%;height:8px;margin-top:10px;border-radius:999px;background:#e5e7eb;overflow:hidden}
+    .progress.active{display:block}
+    .progress span{display:block;width:0;height:100%;background:#047857;transition:width .15s ease}
     .empty{border:1px dashed #cbd5e1;border-radius:8px;padding:16px;text-align:center;color:#64748b}
   </style>
 </head>
@@ -654,6 +657,7 @@ function pageHtml() {
         <label>平台<select id="platform"><option value="win-x64">Windows x64</option><option value="linux-arm64">Linux ARM64</option></select></label>
         <label>更新说明<textarea id="notes" placeholder="说明这次修复或新增了什么"></textarea></label>
       </div>
+      <div id="uploadProgress" class="progress"><span></span></div>
       <p class="row"><button onclick="uploadPackage()">上传并生成清单</button><span id="status" class="status"></span></p>
       <details>
         <summary class="muted">安装包已经在服务器上？使用本地路径导入</summary>
@@ -738,10 +742,47 @@ function pageHtml() {
       form.append("platform", platform.value);
       form.append("notes", notes.value);
       document.getElementById("status").textContent = "正在上传并生成清单...";
-      await api("/packages/upload", form);
+      await uploadWithProgress("/packages/upload", form);
       document.getElementById("status").textContent = "上传成功，已生成安装包清单";
       packageFile.value = "";
       await refresh();
+    }
+    function uploadWithProgress(path, form) {
+      return new Promise((resolve, reject) => {
+        const progress = document.getElementById("uploadProgress");
+        const bar = progress.querySelector("span");
+        progress.classList.add("active");
+        bar.style.width = "0%";
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", "${escapeHtml(apiBaseUrl)}" + path);
+        xhr.upload.onprogress = (event) => {
+          if (!event.lengthComputable) return;
+          const percent = Math.max(1, Math.min(99, Math.round((event.loaded / event.total) * 100)));
+          bar.style.width = percent + "%";
+          document.getElementById("status").textContent = "正在上传：" + percent + "%";
+        };
+        xhr.onload = () => {
+          let data = {};
+          try { data = JSON.parse(xhr.responseText || "{}"); } catch {}
+          if (xhr.status === 401) {
+            location.href = "${escapeHtml(loginUrl)}";
+            return;
+          }
+          if (xhr.status < 200 || xhr.status >= 300 || data.ok === false) {
+            progress.classList.remove("active");
+            reject(new Error(data.error || "上传失败"));
+            return;
+          }
+          bar.style.width = "100%";
+          setTimeout(() => progress.classList.remove("active"), 600);
+          resolve(data);
+        };
+        xhr.onerror = () => {
+          progress.classList.remove("active");
+          reject(new Error("上传失败，请检查网络或服务状态"));
+        };
+        xhr.send(form);
+      });
     }
     async function promote(channel, version, platform) {
       await api("/channels/promote", { channel, version, platform });

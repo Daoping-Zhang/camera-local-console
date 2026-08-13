@@ -127,7 +127,7 @@ function renderMetrics() {
   const savedDeviceCount = uniqueSavedDevices(state.devices || []).length;
   setText("gatewayMetric", state.server.legacyHikBaseUrl ? "已配置" : "未配置");
   setText("deviceMetric", `${savedDeviceCount} 台已保存`);
-  setText("collectorMetric", `${collectors.length} 个，${onlineCount} 在线，${reachableCount} 可访问，${staleCount} 过期`);
+  setText("collectorMetric", `${collectors.length} 个本地采集器，${onlineCount} 已回传，${reachableCount} 可用，${staleCount} 过期`);
   setText("eventMetric", lastEvent ? `${formatRelative(lastEvent.time)} - ${lastEventMac}` : "暂无");
 }
 
@@ -152,12 +152,12 @@ function setupItems() {
     {
       key: "collector",
       label: "本地采集器",
-      status: onlineCollectors.length ? "ready" : reachableCollectors.length ? "warn" : "todo",
-      title: onlineCollectors.length ? "采集器在线" : reachableCollectors.length ? "端口可访问，等待心跳" : "未发现在线采集器",
+      status: onlineCollectors.length || reachableCollectors.length ? "ready" : "todo",
+      title: onlineCollectors.length ? "本地采集器已回传心跳" : reachableCollectors.length ? "本地采集器可用" : "未发现本地采集器",
       detail: onlineCollectors.length
-        ? `${onlineCollectors.length} 个采集器已回传心跳`
+        ? `${onlineCollectors.length} 个本地采集器已回传心跳`
         : reachableCollectors.length
-          ? "采集器端口已通，但还没有完成初始化或回传心跳。"
+          ? "本地采集器端口已通，可以下发摄像头。"
           : "请先启动本地采集器，再点击测试。",
       actionLabel: "测试采集器",
       action: testCollector
@@ -570,19 +570,40 @@ function renderSavedCameraRow(device) {
 }
 
 function savedCameraCollectorStatus(device) {
-  const key = normalizeDeviceIndexCode(device.deviceIndexCode || device.macAddress || device.deviceKey || device.ipAddress);
+  const keys = deviceMatchKeys(device);
   for (const collector of collectors) {
     for (const item of collector.devices || []) {
-      const itemKey = normalizeDeviceIndexCode(item.deviceKey || item.macAddress || item.ipAddress);
-      if (itemKey !== key) continue;
-      const error = item.lastError || item.worker?.lastError || "";
-      const status = item.worker?.status || item.connectionStatus || item.status || "";
-      if (error) return { label: "异常", className: "error", detail: error };
-      if (status === "running" || status === "connected" || item.status === "online") return { label: "在线", className: "online", detail: "采集器已识别该设备" };
-      return { label: status || "已下发", className: "reachable", detail: "等待 SDK 状态更新" };
+      if (!hasMatchingDeviceKey(keys, item)) continue;
+      return collectorDeviceStatus(item);
     }
   }
+  const resultDevice = device.collector?.device || device.collector?.result?.device;
+  if (resultDevice && hasMatchingDeviceKey(keys, resultDevice)) return collectorDeviceStatus(resultDevice);
+  if (device.collector?.status === "registered") return { label: "已下发", className: "reachable", detail: "本地采集器已接收，等待 SDK 状态更新" };
   return { label: "未下发", className: "muted", detail: "仅存在本地配置记录" };
+}
+
+function deviceMatchKeys(device) {
+  return [
+    device.deviceIndexCode,
+    device.deviceKey,
+    device.macAddress,
+    device.ipAddress,
+    device.deviceId
+  ].map(normalizeDeviceIndexCode).filter(Boolean);
+}
+
+function hasMatchingDeviceKey(keys, item) {
+  const itemKeys = deviceMatchKeys(item);
+  return itemKeys.some((key) => keys.includes(key));
+}
+
+function collectorDeviceStatus(item) {
+  const error = item.lastError || item.worker?.lastError || "";
+  const status = item.worker?.status || item.connectionStatus || item.status || "";
+  if (error) return { label: "异常", className: "error", detail: error };
+  if (status === "running" || status === "connected" || item.status === "online") return { label: "在线", className: "online", detail: "本地采集器已登录 SDK" };
+  return { label: status || "已下发", className: "reachable", detail: "本地采集器已接收，等待 SDK 状态更新" };
 }
 
 async function handleSavedCameraAction(button) {
@@ -667,7 +688,7 @@ async function bindAndRegister(button) {
     });
     scanResults = scanResults.map((device) => {
       const key = normalizeDeviceIndexCode(device.macAddress || device.deviceKey || device.ipAddress);
-      return key && key === button.dataset.deviceIndexCode ? { ...device, bound: true, statusText: "已注册，等待 SDK 状态", lastError: "" } : device;
+      return key && key === button.dataset.deviceIndexCode ? { ...device, bound: true, statusText: "已下发，等待本地采集器状态", lastError: "" } : device;
     });
     await refresh();
   } catch (error) {

@@ -187,6 +187,19 @@ function startHikvisionWorker(device) {
 
   child.stdout.on("data", (chunk) => handleWorkerOutput(device, chunk));
   child.stderr.on("data", (chunk) => handleWorkerError(device, chunk));
+  child.on("error", (error) => {
+    const current = workers.get(device.deviceKey);
+    if (current?.process === child) {
+      current.status = "error";
+      current.lastError = error.message;
+    }
+    const saved = devices.get(device.deviceKey);
+    if (saved) {
+      devices.set(device.deviceKey, { ...saved, status: "offline", connectionStatus: "error", lastError: error.message });
+    }
+    writeLog("error", "hikvision worker start failed", { deviceKey: device.deviceKey, error: error.message, pythonPath });
+    sendHeartbeat().catch((heartbeatError) => writeLog("warn", "heartbeat after worker error failed", { error: heartbeatError.message }));
+  });
   child.on("exit", (code, signal) => {
     const current = workers.get(device.deviceKey);
     if (current?.process === child) {
