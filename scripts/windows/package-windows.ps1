@@ -131,6 +131,10 @@ Copy-Item -LiteralPath (Join-Path $projectRoot "README.md") -Destination $appDir
 if (Test-Path -LiteralPath (Join-Path $projectRoot ".env.example")) {
   Copy-Item -LiteralPath (Join-Path $projectRoot ".env.example") -Destination (Join-Path $configDir ".env.example") -Force
 }
+@'
+PORT=3000
+COLLECTOR_PORT=3100
+'@ | Set-Content -Path (Join-Path $configDir "ports.env") -Encoding ASCII
 Copy-Item -LiteralPath (Join-Path $projectRoot "scripts\windows\update-windows.ps1") -Destination (Join-Path $packageDir "update-windows.ps1") -Force
 @{
   version = $Version
@@ -181,6 +185,15 @@ setlocal
 cd /d "%~dp0"
 
 set "APP_DIR=%~dp0app"
+set "PORT=3000"
+set "COLLECTOR_PORT=3100"
+if exist "%~dp0config\ports.env" (
+  for /f "usebackq tokens=1,* delims==" %%A in ("%~dp0config\ports.env") do (
+    if /i "%%A"=="PORT" set "PORT=%%B"
+    if /i "%%A"=="COLLECTOR_PORT" set "COLLECTOR_PORT=%%B"
+  )
+)
+set "LOCAL_COLLECTOR_URL=http://127.0.0.1:%COLLECTOR_PORT%"
 set "NODE_EXE=%~dp0runtime\node\bin\node.exe"
 if not exist "%NODE_EXE%" set "NODE_EXE=%~dp0runtime\node\node.exe"
 if not exist "%NODE_EXE%" set "NODE_EXE=node"
@@ -188,18 +201,25 @@ if not exist "%NODE_EXE%" set "NODE_EXE=node"
 set "PYTHON_PATH=%~dp0runtime\python\python.exe"
 if not exist "%PYTHON_PATH%" set "PYTHON_PATH=python"
 
-set "GATEWAY_URL=http://127.0.0.1:3000"
+set "GATEWAY_URL=http://127.0.0.1:%PORT%"
 set "HIK_SDK_DIR=%~dp0sdk\hikvision"
 set "COLLECTOR_ADAPTER=hikvision"
 
-start "camera-console-3000" cmd /k ""%NODE_EXE%" "%APP_DIR%\src\server.js""
+start "camera-console" cmd /k ""%NODE_EXE%" "%APP_DIR%\src\server.js""
 timeout /t 2 /nobreak >nul
-start "" "http://127.0.0.1:3000"
+start "" "http://127.0.0.1:%PORT%"
 '@ | Set-Content -Path (Join-Path $packageDir "start-all.cmd") -Encoding ASCII
 
 @'
 @echo off
-start "" "http://127.0.0.1:3000"
+setlocal
+set "PORT=3000"
+if exist "%~dp0config\ports.env" (
+  for /f "usebackq tokens=1,* delims==" %%A in ("%~dp0config\ports.env") do (
+    if /i "%%A"=="PORT" set "PORT=%%B"
+  )
+)
+start "" "http://127.0.0.1:%PORT%"
 '@ | Set-Content -Path (Join-Path $packageDir "open-console.cmd") -Encoding ASCII
 
 @'
@@ -210,7 +230,7 @@ pause
 
 @'
 @echo off
-taskkill /FI "WINDOWTITLE eq camera-console-3000*" /T /F >nul 2>nul
+taskkill /FI "WINDOWTITLE eq camera-console*" /T /F >nul 2>nul
 echo stopped
 pause
 '@ | Set-Content -Path (Join-Path $packageDir "stop-all.cmd") -Encoding ASCII

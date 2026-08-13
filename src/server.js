@@ -13,9 +13,13 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, "public");
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || "127.0.0.1";
+const LOCAL_COLLECTOR_URL = process.env.LOCAL_COLLECTOR_URL || (process.env.COLLECTOR_PORT ? `http://127.0.0.1:${process.env.COLLECTOR_PORT}` : "");
 
 let state = loadState();
 state.devices = dedupeDeviceRecords(state.devices);
+if (LOCAL_COLLECTOR_URL) {
+  state.localCollector = { ...(state.localCollector || {}), baseUrl: LOCAL_COLLECTOR_URL };
+}
 if (process.env.LEGACY_HIK_BASE_URL) {
   state.server.legacyHikBaseUrl = process.env.LEGACY_HIK_BASE_URL;
 }
@@ -48,6 +52,12 @@ server.listen(PORT, HOST, () => {
   logger.info("local console started", { host: HOST, port: PORT });
   ensureManagedCollector().catch((error) => logger.warn("managed collector bootstrap failed", { error: error.message }));
   scheduleConfiguredCollectorRefresh({ force: true });
+});
+server.on("error", (error) => {
+  if (error.code === "EADDRINUSE") {
+    logger.error("local console port is already in use", { host: HOST, port: PORT, hint: "请修改 PORT 后重启，例如 Windows 包里的 config\\ports.env" });
+  }
+  throw error;
 });
 
 async function handleApi(req, res) {
@@ -205,7 +215,7 @@ async function handleApi(req, res) {
     const body = await readJson(req);
     const record = buildDeviceRecord(body);
     const remote = bindLocalDevice(record);
-    state.devices = state.devices.filter((item) => deviceIndexCode(item) !== deviceIndexCode(record));
+    state.devices = state.devices.filter((item) => deviceUniqueKey(item) !== deviceUniqueKey(record));
     state.devices.unshift({ ...record, localId: `${Date.now()}`, remote });
     state.devices = dedupeDeviceRecords(state.devices).slice(0, 50);
     saveState(state);
@@ -216,14 +226,10 @@ async function handleApi(req, res) {
   }
   if (req.method === "POST" && url.pathname === "/api/devices/delete") {
     const body = await readJson(req);
-    const key = deviceIndexCode({ macAddress: body.deviceIndexCode || body.macAddress || body.deviceKey || body.ipAddress });
+    const key = deviceUniqueKey({ macAddress: body.deviceIndexCode || body.macAddress || body.deviceKey || body.deviceId || body.ipAddress });
     const before = state.devices.length;
     state.devices = state.devices.filter((device) => {
-      const deviceKey = deviceIndexCode({
-        macAddress: device.deviceIndexCode || device.macAddress,
-        deviceKey: device.deviceKey || device.deviceId,
-        ipAddress: device.ipAddress
-      });
+      const deviceKey = deviceUniqueKey(device);
       return deviceKey !== key;
     });
     saveState(state);
@@ -304,7 +310,7 @@ async function registerDeviceFlow(body) {
   const record = buildDeviceRecord(device);
   const remote = bindLocalDevice(record);
   state.localCollector = { ...(state.localCollector || {}), baseUrl: collectorUrl };
-  state.devices = state.devices.filter((item) => deviceIndexCode(item) !== deviceIndexCode(record));
+  state.devices = state.devices.filter((item) => deviceUniqueKey(item) !== deviceUniqueKey(record));
   state.devices.unshift({ ...record, localId: `${Date.now()}`, remote, collector });
   state.devices = dedupeDeviceRecords(state.devices).slice(0, 50);
   saveState(state);
@@ -435,12 +441,28 @@ function dedupeDeviceRecords(devices) {
   const seen = new Set();
   const output = [];
   for (const device of Array.isArray(devices) ? devices : []) {
-    const key = deviceIndexCode(device);
+    const key = deviceUniqueKey(device);
     if (!key || seen.has(key)) continue;
     seen.add(key);
-    output.push(device);
+    output.push({
+      ...device,
+      macAddress: normalizeMacAddress(device.macAddress || device.deviceIndexCode || device.deviceKey || device.deviceId) || device.macAddress,
+      deviceKey: normalizeMacAddress(device.macAddress || device.deviceIndexCode || device.deviceKey || device.deviceId) || device.deviceKey,
+      deviceIndexCode: normalizeMacAddress(device.macAddress || device.deviceIndexCode || device.deviceKey || device.deviceId) || device.deviceIndexCode
+    });
   }
   return output;
+}
+
+function deviceUniqueKey(device) {
+  return normalizeMacAddress(device.macAddress || device.deviceIndexCode || device.deviceKey || device.deviceId) || deviceIndexCode(device);
+}
+
+function normalizeMacAddress(value) {
+  const text = String(value || "").trim().toLowerCase();
+  const compact = text.replace(/[^0-9a-f]/g, "");
+  if (compact.length !== 12) return "";
+  return compact.match(/.{1,2}/g).join(":");
 }
 
 function buildCollectorSnapshot() {
@@ -461,26 +483,22 @@ function buildCollectorSnapshot() {
 
 function buildDeviceRecord(body) {
   const shopId = String(body.shopId || state.shop.shopId || "local-shop");
-  const macAddress = String(body.macAddress || body.deviceId || body.ipAddress || "").trim();
+  const macAddress = normalizeMacAddress(body.macAddress || body.deviceIndexCode || body.deviceKey || body.deviceId);
   if (!macAddress) {
     throw new Error("macAddress is required");
   }
-  const indexCode = deviceIndexCode({
-    macAddress: body.deviceIndexCode || macAddress,
-    deviceKey: body.deviceKey,
-    ipAddress: body.ipAddress
-  });
   const savePassword = body.savePassword ?? state.cameraDefaults?.savePassword;
   return {
     shopId,
     shopName: body.shopName || state.shop.shopName || "Local Shop",
     type: Number(body.type),
     macAddress,
-    deviceIndexCode: indexCode,
-    deviceId: body.deviceId || indexCode || macAddress,
+    deviceKey: macAddress,
+    deviceIndexCode: macAddress,
+    deviceId: macAddress,
     deviceType: body.deviceType || "Hikvision",
     ipAddress: body.ipAddress || "",
-    deviceName: body.deviceName || `Camera ${macAddress}`,
+    deviceName: body.deviceName || `Camera ${body.ipAddress || macAddress}`,
     username: body.username || body.sdk?.username || state.cameraDefaults?.username || "admin",
     password: savePassword ? (body.password || body.sdk?.password || "") : "",
     sdkPort: Number(body.sdkPort || body.sdk?.port || state.cameraDefaults?.sdkPort || 8000),
@@ -538,8 +556,14 @@ async function ingestCollectorEvent(event) {
 }
 
 function buildCollectorDeviceConfig(body) {
+  const macAddress = normalizeMacAddress(body.macAddress || body.deviceIndexCode || body.deviceKey || body.deviceId);
+  if (!macAddress) throw new Error("macAddress is required");
   return {
     ...body,
+    macAddress,
+    deviceKey: macAddress,
+    deviceIndexCode: macAddress,
+    deviceId: macAddress,
     gatewayUrl: body.gatewayUrl || `http://${HOST}:${PORT}`,
     sdk: {
       vendor: body.sdk?.vendor || body.vendor || "hikvision-real",

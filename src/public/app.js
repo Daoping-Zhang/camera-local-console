@@ -461,7 +461,7 @@ function renderScanResults(devices) {
   const container = $("scanResults");
   if (!container) return;
   container.innerHTML = devices.map((device) => {
-    const deviceIndexCode = normalizeDeviceIndexCode(device.deviceIndexCode || device.macAddress || device.deviceKey || device.ipAddress);
+    const deviceIndexCode = normalizeDeviceIndexCode(device.macAddress || device.deviceIndexCode || device.deviceKey);
     const bound = device.bound
       ? `<span class="status-badge online">已注册</span>`
       : `<span class="status-badge reachable">新发现</span>`;
@@ -481,7 +481,7 @@ function renderScanResults(devices) {
           <option value="1" ${Number(device.type || 0) === 1 ? "selected" : ""}>出口/内侧</option>
         </select>
         <button data-action="open-login" data-web-url="${escapeHtml(device.webUrl || defaultCameraWebUrl(device))}">打开登录页</button>
-        <button data-action="register" data-ip="${escapeHtml(device.ipAddress)}" data-mac="${escapeHtml(device.macAddress || "")}" data-device-index-code="${escapeHtml(deviceIndexCode)}">注册到采集器</button>
+        <button data-action="register" data-ip="${escapeHtml(device.ipAddress)}" data-mac="${escapeHtml(device.macAddress || "")}" data-device-index-code="${escapeHtml(deviceIndexCode)}" ${deviceIndexCode ? "" : "disabled"}>注册到采集器</button>
         <button class="secondary" data-action="delete" data-ip="${escapeHtml(device.ipAddress)}" data-mac="${escapeHtml(device.macAddress || "")}" data-device-index-code="${escapeHtml(deviceIndexCode)}">删除</button>
       </div>
       <div class="flow-steps">
@@ -622,17 +622,17 @@ async function handleSavedCameraAction(button) {
 }
 
 function savedDeviceConfig(device) {
-  const key = normalizeDeviceIndexCode(device.deviceIndexCode || device.macAddress || device.deviceKey || device.ipAddress);
-  return (state?.devices || []).find((item) => normalizeDeviceIndexCode(item.deviceIndexCode || item.macAddress || item.deviceKey || item.ipAddress) === key);
+  const key = normalizeDeviceIndexCode(device.macAddress || device.deviceIndexCode || device.deviceKey);
+  return (state?.devices || []).find((item) => normalizeDeviceIndexCode(item.macAddress || item.deviceIndexCode || item.deviceKey) === key);
 }
 
 function mergeScanResults(devices) {
   const previous = new Map(scanResults.map((device) => [
-    normalizeDeviceIndexCode(device.deviceIndexCode || device.macAddress || device.deviceKey || device.ipAddress),
+    normalizeDeviceIndexCode(device.macAddress || device.deviceIndexCode || device.deviceKey),
     device
   ]));
-  return devices.map((device) => {
-    const key = normalizeDeviceIndexCode(device.deviceIndexCode || device.macAddress || device.deviceKey || device.ipAddress);
+  return devices.filter((device) => normalizeDeviceIndexCode(device.macAddress || device.deviceIndexCode || device.deviceKey)).map((device) => {
+    const key = normalizeDeviceIndexCode(device.macAddress || device.deviceIndexCode || device.deviceKey);
     const old = previous.get(key) || {};
     return {
       ...device,
@@ -653,7 +653,7 @@ function persistScanCardInput(input) {
   const field = input.dataset.field;
   if (!key || !field) return;
   scanResults = scanResults.map((device) => {
-    const deviceKey = normalizeDeviceIndexCode(device.deviceIndexCode || device.macAddress || device.deviceKey || device.ipAddress);
+    const deviceKey = normalizeDeviceIndexCode(device.macAddress || device.deviceIndexCode || device.deviceKey);
     if (deviceKey !== key) return device;
     return { ...device, [field]: field === "type" ? Number(input.value) : input.value };
   });
@@ -662,6 +662,11 @@ function persistScanCardInput(input) {
 async function bindAndRegister(button) {
   const card = button.closest(".device-card");
   const read = (field) => card.querySelector(`[data-field="${field}"]`)?.value || "";
+  const macAddress = button.dataset.mac || "";
+  if (!normalizeDeviceIndexCode(macAddress)) {
+    setScanCardStatus(button.dataset.deviceIndexCode, "缺少 MAC 地址，不能注册为摄像头");
+    return;
+  }
   setScanCardStatus(button.dataset.deviceIndexCode, "正在注册...");
   try {
     await api("/api/devices/register-flow", {
@@ -673,10 +678,10 @@ async function bindAndRegister(button) {
           shopId: $("shopId")?.value,
           shopName: $("shopName")?.value,
           ipAddress: button.dataset.ip,
-          macAddress: button.dataset.mac,
-          deviceKey: button.dataset.deviceIndexCode || button.dataset.mac || button.dataset.ip,
+          macAddress,
+          deviceKey: macAddress,
           deviceIndexCode: button.dataset.deviceIndexCode,
-          deviceId: read("deviceId") || button.dataset.deviceIndexCode,
+          deviceId: macAddress,
           deviceName: read("deviceName"),
           type: Number(read("type")),
           sdkPort: Number(read("sdkPort") || $("sdkPort")?.value || $("collectorDefaultSdkPort")?.value || 8000),
@@ -687,7 +692,7 @@ async function bindAndRegister(button) {
       })
     });
     scanResults = scanResults.map((device) => {
-      const key = normalizeDeviceIndexCode(device.macAddress || device.deviceKey || device.ipAddress);
+      const key = normalizeDeviceIndexCode(device.macAddress || device.deviceKey);
       return key && key === button.dataset.deviceIndexCode ? { ...device, bound: true, statusText: "已下发，等待本地采集器状态", lastError: "" } : device;
     });
     await refresh();

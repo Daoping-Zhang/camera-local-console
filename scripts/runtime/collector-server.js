@@ -87,6 +87,12 @@ server.listen(port, "0.0.0.0", () => {
   console.log(`collector=${collectorId}, gateway=${gatewayUrl || "not configured"}`);
   writeLog("info", "collector server started", { port, gatewayUrl });
 });
+server.on("error", (error) => {
+  if (error.code === "EADDRINUSE") {
+    writeLog("error", "collector port is already in use", { port, hint: "请修改 COLLECTOR_PORT 或 3000 控制台里的本地采集器地址" });
+  }
+  throw error;
+});
 
 setInterval(sendHeartbeat, Number(process.env.HEARTBEAT_INTERVAL_MS || 10000));
 if (adapterMode !== "hikvision") {
@@ -116,7 +122,8 @@ function pathExists(value) {
 }
 
 function normalizeDevice(body) {
-  const deviceKey = String(body.deviceKey || body.macAddress || body.ipAddress || "").trim();
+  const macAddress = normalizeMacAddress(body.macAddress || body.deviceKey || body.deviceIndexCode || body.deviceId);
+  const deviceKey = macAddress;
   if (!deviceKey) throw new Error("deviceKey is required");
   return {
     deviceKey,
@@ -124,7 +131,7 @@ function normalizeDevice(body) {
     shopId: String(body.shopId || ""),
     shopName: body.shopName || "",
     ipAddress: body.ipAddress || "",
-    macAddress: body.macAddress || deviceKey,
+    macAddress,
     role: body.role || (Number(body.type) === 1 ? "inside" : "outside"),
     type: Number(body.type || 0),
     sdk: {
@@ -137,6 +144,13 @@ function normalizeDevice(body) {
     connectionStatus: "pending",
     registeredAt: new Date().toISOString()
   };
+}
+
+function normalizeMacAddress(value) {
+  const text = String(value || "").trim().toLowerCase();
+  const compact = text.replace(/[^0-9a-f]/g, "");
+  if (compact.length !== 12) return "";
+  return compact.match(/.{1,2}/g).join(":");
 }
 
 async function applyRuntimeSnapshot(snapshot) {
