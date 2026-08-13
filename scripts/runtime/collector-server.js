@@ -1,5 +1,6 @@
 import http from "node:http";
 import { spawn } from "node:child_process";
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -8,6 +9,7 @@ const port = Number(process.env.COLLECTOR_PORT || 3100);
 const collectorId = process.env.COLLECTOR_ID || "collector-local-adapter";
 const adapterMode = process.env.COLLECTOR_ADAPTER || "fake";
 const pythonPath = process.env.PYTHON_PATH || "python";
+const sdkDir = process.env.HIK_SDK_DIR || defaultSdkDir();
 let gatewayUrl = (process.env.GATEWAY_URL || "").replace(/\/+$/, "");
 const devices = new Map();
 const workers = new Map();
@@ -80,6 +82,28 @@ server.listen(port, "0.0.0.0", () => {
 setInterval(sendHeartbeat, Number(process.env.HEARTBEAT_INTERVAL_MS || 10000));
 if (adapterMode !== "hikvision") {
   setInterval(() => sendEvent(firstDeviceKey()).catch((error) => console.error("event failed", error.message)), Number(process.env.INTERVAL_MS || 15000));
+}
+
+function defaultSdkDir() {
+  const projectRoot = path.resolve(__dirname, "..", "..");
+  const packageRoot = path.resolve(projectRoot, "..");
+  const platformDir = process.platform === "win32"
+    ? "win-x64"
+    : (process.arch === "arm64" ? "linux-arm64" : "linux-x64");
+  const candidates = [
+    path.join(packageRoot, "sdk", "hikvision"),
+    path.join(projectRoot, "vendor", "hikvision", platformDir),
+    path.join(packageRoot, "vendor", "hikvision", platformDir)
+  ];
+  return candidates.find((candidate) => pathExists(candidate)) || candidates[1];
+}
+
+function pathExists(value) {
+  try {
+    return Boolean(value) && path.isAbsolute(value) && fs.existsSync(value);
+  } catch {
+    return false;
+  }
 }
 
 function normalizeDevice(body) {
@@ -170,7 +194,8 @@ function startHikvisionWorker(device) {
     "--mac-address", device.macAddress || device.deviceKey,
     "--channel-id", "1",
     "--collector-id", collectorId,
-    "--gateway-url", gatewayUrl
+    "--gateway-url", gatewayUrl,
+    "--sdk-dir", sdkDir
   ];
   const child = spawn(pythonPath, args, {
     cwd: path.join(__dirname, ".."),
@@ -197,7 +222,7 @@ function startHikvisionWorker(device) {
     if (saved) {
       devices.set(device.deviceKey, { ...saved, status: "offline", connectionStatus: "error", lastError: error.message });
     }
-    writeLog("error", "hikvision worker start failed", { deviceKey: device.deviceKey, error: error.message, pythonPath });
+    writeLog("error", "hikvision worker start failed", { deviceKey: device.deviceKey, error: error.message, pythonPath, sdkDir });
     sendHeartbeat().catch((heartbeatError) => writeLog("warn", "heartbeat after worker error failed", { error: heartbeatError.message }));
   });
   child.on("exit", (code, signal) => {

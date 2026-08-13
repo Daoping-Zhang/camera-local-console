@@ -316,19 +316,26 @@ MSG_CALLBACK = PT["callback"](c_bool, C_LONG, POINTER(NET_DVR_ALARMER), c_void_p
 
 
 def default_sdk_dir():
-    root = Path(__file__).resolve().parents[2]
+    project_root = Path(__file__).resolve().parents[2]
+    package_root = project_root.parent
     if PT["system"] == "windows":
         candidates = [
-            root / "camera-local-console" / "vendor" / "hikvision" / "win-x64",
-            root / "HCNetSDKV6.1.11.5_build20251204_Win64_ZH" / "库文件",
+            package_root / "sdk" / "hikvision",
+            project_root / "vendor" / "hikvision" / "win-x64",
+            package_root / "vendor" / "hikvision" / "win-x64",
+            package_root / "HCNetSDKV6.1.11.5_build20251204_Win64_ZH" / "库文件",
+            project_root / "HCNetSDKV6.1.11.5_build20251204_Win64_ZH" / "库文件",
         ]
     else:
         machine = platform.machine().lower()
         platform_dir = "linux-arm64" if machine in {"aarch64", "arm64"} else "linux-x64"
         candidates = [
-            root / "camera-local-console" / "vendor" / "hikvision" / platform_dir,
+            project_root / "vendor" / "hikvision" / platform_dir,
+            package_root / "vendor" / "hikvision" / platform_dir,
+            package_root / "sdk" / "hikvision",
             Path("/opt/hikvision-sdk"),
-            root / "HCNetSDKV6.1.11.5_build20251204_ArmLinux64_ZH" / "MakeAll",
+            package_root / "HCNetSDKV6.1.11.5_build20251204_ArmLinux64_ZH" / "MakeAll",
+            project_root / "HCNetSDKV6.1.11.5_build20251204_ArmLinux64_ZH" / "MakeAll",
         ]
     for candidate in candidates:
         if candidate.exists():
