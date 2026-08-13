@@ -128,6 +128,7 @@ Copy-DirectoryContent -Source (Join-Path $projectRoot "src") -Target (Join-Path 
 Copy-DirectoryContent -Source (Join-Path $projectRoot "scripts") -Target (Join-Path $appDir "scripts")
 Copy-Item -LiteralPath (Join-Path $projectRoot "package.json") -Destination $appDir -Force
 Copy-Item -LiteralPath (Join-Path $projectRoot "README.md") -Destination $appDir -Force
+Copy-Item -LiteralPath (Join-Path $projectRoot "data\config.example.json") -Destination (Join-Path $dataDir "config.json") -Force
 if (Test-Path -LiteralPath (Join-Path $projectRoot ".env.example")) {
   Copy-Item -LiteralPath (Join-Path $projectRoot ".env.example") -Destination (Join-Path $configDir ".env.example") -Force
 }

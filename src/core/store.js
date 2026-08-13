@@ -9,10 +9,10 @@ const defaultState = {
     baseUrl: "http://localhost:18091",
     loginPath: "/user/login",
     cameraDataPath: "/contact/sync/cameraData",
-    legacyHikBaseUrl: "",
+    legacyHikBaseUrl: "http://www.fenqunshuju.com",
     tokenHeader: "Authorization",
     token: "",
-    localDebug: false
+    localDebug: true
   },
   localCollector: {
     baseUrl: "http://127.0.0.1:3100",
@@ -24,8 +24,8 @@ const defaultState = {
     savePassword: false
   },
   shop: {
-    shopId: "",
-    shopName: ""
+    shopId: "10001",
+    shopName: "本地调试门店 A"
   },
   release: {
     version: "0.1.0",

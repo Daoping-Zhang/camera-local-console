@@ -21,5 +21,12 @@
     "shopId": "10001",
     "shopName": "本地调试门店 A"
   },
+  "release": {
+    "version": "0.1.0",
+    "channel": "stable",
+    "manifestUrl": "http://www.fenqunshuju.com/releases/camera-local-console/channels/stable.json",
+    "lastCheckAt": "",
+    "lastCheckResult": null
+  },
   "devices": []
 }
