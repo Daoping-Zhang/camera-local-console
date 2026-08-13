@@ -61,6 +61,16 @@ const server = http.createServer(async (req, res) => {
       const result = rollbackChannel(body);
       return sendJson(res, 200, { ok: true, result, state: state() });
     }
+    if (req.method === "POST" && releasePathname === "/api/channels/revoke") {
+      const body = await readJson(req);
+      const result = revokeChannel(body);
+      return sendJson(res, 200, { ok: true, result, state: state() });
+    }
+    if (req.method === "POST" && releasePathname === "/api/packages/delete") {
+      const body = await readJson(req);
+      const result = deletePackage(body);
+      return sendJson(res, 200, { ok: true, result, state: state() });
+    }
     sendJson(res, 404, { ok: false, error: "not found" });
   } catch (error) {
     sendJson(res, 500, { ok: false, error: error.message });
@@ -90,16 +100,31 @@ function ensureLayout() {
 
 function state() {
   const registry = readRegistry();
+  const channels = Object.fromEntries(CHANNELS.map((channel) => [channel, readChannel(channel)]));
   return {
     ok: true,
     releaseRoot: RELEASE_ROOT,
     baseUrl: BASE_URL,
     currentVersion: readPackageVersion(),
     suggestedNextVersion: suggestNextVersion(registry.packages || []),
-    channels: Object.fromEntries(CHANNELS.map((channel) => [channel, readChannel(channel)])),
-    packages: registry.packages || [],
+    channels,
+    packages: packageState(registry.packages || [], channels),
     channelHistory: registry.channelHistory || []
   };
+}
+
+function packageState(packages, channels) {
+  return packages.map((item) => {
+    const publishedChannels = CHANNELS.filter((channel) => {
+      const manifest = channels[channel];
+      return manifest?.version === item.version && manifest?.platform === item.platform;
+    });
+    return {
+      ...item,
+      status: publishedChannels.length ? "published" : (item.status || "draft"),
+      publishedChannels
+    };
+  });
 }
 
 function importPackage(body) {
@@ -132,7 +157,7 @@ function importPackage(body) {
 
   const registry = readRegistry();
   registry.packages = [
-    { ...manifest, packageName, importedAt: new Date().toISOString() },
+    { ...manifest, packageName, status: "draft", importedAt: new Date().toISOString() },
     ...(registry.packages || []).filter((item) => !(item.version === version && item.platform === platform))
   ];
   writeRegistry(registry);
@@ -176,6 +201,11 @@ function promoteChannel(body) {
   writeJson(path.join(RELEASE_ROOT, "channels", `${channel}.json`), manifest);
 
   const registry = readRegistry();
+  registry.packages = (registry.packages || []).map((item) => (
+    item.version === version && item.platform === platform
+      ? { ...item, status: "published", lastPublishedChannel: channel, publishedAt: new Date().toISOString() }
+      : item
+  ));
   registry.channelHistory = [
     { action: "promote", channel, version, platform, at: new Date().toISOString() },
     ...(registry.channelHistory || [])
@@ -186,6 +216,58 @@ function promoteChannel(body) {
 
 function rollbackChannel(body) {
   return promoteChannel({ ...body, channel: body.channel });
+}
+
+function revokeChannel(body) {
+  const channel = String(body.channel || "").trim();
+  if (!CHANNELS.includes(channel)) throw new Error(`channel must be one of: ${CHANNELS.join(", ")}`);
+  const channelPath = path.join(RELEASE_ROOT, "channels", `${channel}.json`);
+  const manifest = fs.existsSync(channelPath) ? readJsonFile(channelPath) : null;
+  if (!manifest) throw new Error(`channel is already empty: ${channel}`);
+  fs.rmSync(channelPath, { force: true });
+
+  const registry = readRegistry();
+  registry.packages = (registry.packages || []).map((item) => (
+    item.version === manifest.version && item.platform === manifest.platform
+      ? { ...item, status: "revoked", revokedAt: new Date().toISOString() }
+      : item
+  ));
+  registry.channelHistory = [
+    { action: "revoke", channel, version: manifest.version, platform: manifest.platform, at: new Date().toISOString() },
+    ...(registry.channelHistory || [])
+  ].slice(0, 200);
+  writeRegistry(registry);
+  return { channel, manifest };
+}
+
+function deletePackage(body) {
+  const version = String(body.version || "").trim();
+  const platform = String(body.platform || "win-x64").trim();
+  if (!version) throw new Error("version is required");
+  if (!PLATFORMS.includes(platform)) throw new Error(`platform must be one of: ${PLATFORMS.join(", ")}`);
+  const channels = Object.fromEntries(CHANNELS.map((channel) => [channel, readChannel(channel)]));
+  const publishedChannels = CHANNELS.filter((channel) => {
+    const manifest = channels[channel];
+    return manifest?.version === version && manifest?.platform === platform;
+  });
+  if (publishedChannels.length) {
+    throw new Error(`package is published to ${publishedChannels.join(", ")}. Revoke it before deleting.`);
+  }
+
+  const registry = readRegistry();
+  const item = (registry.packages || []).find((entry) => entry.version === version && entry.platform === platform);
+  if (!item) throw new Error("package not found");
+  const manifestPath = path.join(RELEASE_ROOT, "manifests", `${version}-${platform}.json`);
+  const packagePath = path.join(RELEASE_ROOT, "packages", platform, item.packageName || path.basename(item.url || ""));
+  fs.rmSync(manifestPath, { force: true });
+  if (item.packageName && fs.existsSync(packagePath)) fs.rmSync(packagePath, { force: true });
+  registry.packages = (registry.packages || []).filter((entry) => !(entry.version === version && entry.platform === platform));
+  registry.channelHistory = [
+    { action: "delete", channel: "", version, platform, at: new Date().toISOString() },
+    ...(registry.channelHistory || [])
+  ].slice(0, 200);
+  writeRegistry(registry);
+  return { version, platform, deleted: true };
 }
 
 function readChannel(channel) {
@@ -591,6 +673,7 @@ function pageHtml() {
     button,.button{display:inline-flex;align-items:center;justify-content:center;min-height:36px;padding:0 14px;border:0;border-radius:6px;background:#047857;color:white;font-weight:700;cursor:pointer;text-decoration:none}
     button.secondary,.button.secondary{border:1px solid #cbd5e1;background:white;color:#344054}
     button.warn{background:#b42318}
+    button:disabled{opacity:.45;cursor:not-allowed}
     .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
     .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
     .head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap}
@@ -703,7 +786,7 @@ function pageHtml() {
         if (!manifest) {
           return '<div class="channel-card"><h3>' + channelName(name) + '</h3><span class="pill">未发布</span><p class="muted">暂无版本</p></div>';
         }
-        return '<div class="channel-card active"><h3>' + channelName(name) + '</h3><span class="pill">' + escapeHtml(manifest.platform || '-') + '</span><p><strong>版本：</strong>' + escapeHtml(manifest.version || '-') + '</p><p class="muted">' + escapeHtml(manifest.notes || '暂无更新说明') + '</p><p><a class="button secondary" href="' + escapeHtml(appState.baseUrl + '/channels/' + name + '.json') + '" target="_blank" rel="noopener">查看清单</a></p></div>';
+        return '<div class="channel-card active"><h3>' + channelName(name) + '</h3><span class="pill">' + escapeHtml(manifest.platform || '-') + '</span><p><strong>版本：</strong>' + escapeHtml(manifest.version || '-') + '</p><p class="muted">' + escapeHtml(manifest.notes || '暂无更新说明') + '</p><p class="row"><a class="button secondary" href="' + escapeHtml(appState.baseUrl + '/channels/' + name + '.json') + '" target="_blank" rel="noopener">查看清单</a><button class="warn" onclick="revokeChannel(\\'' + name + '\\')">撤回通道</button></p></div>';
       }).join("") + '</div>';
     }
     function renderPackages() {
@@ -711,12 +794,18 @@ function pageHtml() {
         document.getElementById("packages").innerHTML = '<div class="empty">还没有导入安装包。</div>';
         return;
       }
-      const rows = appState.packages.map((pkg) => '<tr><td><strong>' + escapeHtml(pkg.version) + '</strong></td><td>' + escapeHtml(pkg.platform) + '</td><td><code>' + escapeHtml(pkg.sha256) + '</code></td><td>' + escapeHtml(pkg.notes || '暂无说明') + '</td><td><div class="row">' + ["canary","beta","stable"].map(c => '<button onclick="promote(\\'' + c + '\\',\\'' + escapeHtml(pkg.version) + '\\',\\'' + escapeHtml(pkg.platform) + '\\')">发布到 ' + c + '</button>').join(' ') + '</div></td></tr>').join("");
-      document.getElementById("packages").innerHTML = '<div class="table-wrap"><table><thead><tr><th>版本</th><th>平台</th><th>SHA256</th><th>更新说明</th><th>发布操作</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+      const rows = appState.packages.map((pkg) => {
+        const channels = pkg.publishedChannels && pkg.publishedChannels.length ? pkg.publishedChannels.map(channelName).join("，") : "-";
+        const canDelete = !pkg.publishedChannels || !pkg.publishedChannels.length;
+        const actions = ["canary","beta","stable"].map(c => '<button onclick="promote(\\'' + c + '\\',\\'' + escapeHtml(pkg.version) + '\\',\\'' + escapeHtml(pkg.platform) + '\\')">发布到 ' + c + '</button>').join(' ') +
+          '<button class="secondary" onclick="deletePackage(\\'' + escapeHtml(pkg.version) + '\\',\\'' + escapeHtml(pkg.platform) + '\\')" ' + (canDelete ? '' : 'disabled title="请先从通道撤回"') + '>删除</button>';
+        return '<tr><td><strong>' + escapeHtml(pkg.version) + '</strong><p class="muted">' + escapeHtml(statusName(pkg.status)) + '</p></td><td>' + escapeHtml(pkg.platform) + '</td><td>' + escapeHtml(channels) + '</td><td><code>' + escapeHtml(pkg.sha256) + '</code></td><td>' + escapeHtml(pkg.notes || '暂无说明') + '</td><td><div class="row">' + actions + '</div></td></tr>';
+      }).join("");
+      document.getElementById("packages").innerHTML = '<div class="table-wrap"><table><thead><tr><th>版本</th><th>平台</th><th>当前通道</th><th>SHA256</th><th>更新说明</th><th>操作</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
     }
     function renderHistory() {
       const history = appState.channelHistory || [];
-      document.getElementById("history").textContent = history.length ? history.map((item) => item.at + '  ' + channelName(item.channel) + ' -> ' + item.version + ' / ' + item.platform).join("\\n") : "暂无发布历史";
+      document.getElementById("history").textContent = history.length ? history.map((item) => item.at + '  ' + actionName(item.action) + '  ' + (item.channel ? channelName(item.channel) : '-') + ' -> ' + item.version + ' / ' + item.platform).join("\\n") : "暂无发布历史";
     }
     function renderVersionSuggestion() {
       const suggested = appState.suggestedNextVersion || "";
@@ -789,12 +878,30 @@ function pageHtml() {
       document.getElementById("status").textContent = "已发布 " + version + " 到 " + channelName(channel);
       await refresh();
     }
+    async function revokeChannel(channel) {
+      if (!confirm("确认撤回 " + channelName(channel) + " 当前版本吗？客户端将不再从该通道检查到这个版本。")) return;
+      await api("/channels/revoke", { channel });
+      document.getElementById("status").textContent = "已撤回 " + channelName(channel);
+      await refresh();
+    }
+    async function deletePackage(version, platform) {
+      if (!confirm("确认删除 " + version + " / " + platform + " 吗？该操作会删除安装包文件和 manifest。")) return;
+      await api("/packages/delete", { version, platform });
+      document.getElementById("status").textContent = "已删除 " + version + " / " + platform;
+      await refresh();
+    }
     async function logout() {
       await api("/logout", {});
       location.href = "${escapeHtml(loginUrl)}";
     }
     function channelName(channel) {
       return { stable: "稳定版 stable", beta: "测试版 beta", canary: "灰度版 canary" }[channel] || channel;
+    }
+    function statusName(status) {
+      return { draft: "未发布", published: "已发布", revoked: "已撤回", deleted: "已删除" }[status] || status || "未发布";
+    }
+    function actionName(action) {
+      return { promote: "发布", revoke: "撤回", delete: "删除" }[action] || action || "操作";
     }
     function escapeHtml(value) {
       return String(value ?? "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#039;");
