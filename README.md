@@ -23,13 +23,13 @@
 1. 打开下载页，下载 Windows 安装包。
 2. 解压到固定目录，例如 `D:\camera-local-console`。
 3. 双击 `start-all.cmd`。
-4. 浏览器会先打开“正在启动本地控制台”等待页。
-5. 服务启动完成后，页面会自动跳转到 `http://127.0.0.1:3000`。
+4. 程序会打开一个运行窗口，并自动打开本地控制台页面。
+5. 控制台地址是 `http://127.0.0.1:3000`。
 
-默认启动不显示终端窗口，日志在控制台的“运行日志”里查看。调试人员需要看终端时，可以运行：
+如果只想启动服务、不打开浏览器，可以运行：
 
 ```bat
-start-all.cmd /console
+start-all.cmd /no-browser
 ```
 
 ## 摄像头注册
@@ -69,7 +69,7 @@ CameraLocalConsoleWatchdog
 ```text
 Windows 用户登录时自动检查
 每 1 分钟检查一次本地控制台
-如果 3000 不可访问，自动后台拉起 start-all.cmd /no-browser
+如果 3000 不可访问，自动拉起 start-all.cmd /minimized /no-browser
 ```
 
 取消自启动与自恢复：
@@ -128,10 +128,8 @@ config/
 data/
 logs/
 start-all.cmd
-start-console.ps1
 stop-all.cmd
 open-console.cmd
-open-starting-page.ps1
 enable-autostart.cmd
 disable-autostart.cmd
 update.cmd
@@ -255,10 +253,10 @@ APP_VERSION=0.1.1 IMAGE_REPOSITORY=registry.example.com/camera-local-console bas
 
 ### 双击后没看到终端
 
-这是正常行为。默认后台启动，并打开“正在启动本地控制台”等待页。需要看终端时运行：
+当前版本默认会打开运行窗口。如果完全没有反应，优先重新运行：
 
 ```bat
-start-all.cmd /console
+start-all.cmd
 ```
 
 ### 扫描不到摄像头

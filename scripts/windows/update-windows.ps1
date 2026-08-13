@@ -251,7 +251,7 @@ function Start-CameraConsole {
   if (-not (Test-Path -LiteralPath $startCmd)) {
     throw "start-all.cmd was not found."
   }
-  $arguments = if ($RestartMode -eq "NoBrowser") { "/no-browser" } else { "" }
+  $arguments = if ($RestartMode -eq "NoBrowser") { "/minimized /no-browser" } else { "" }
   Start-Process -FilePath $startCmd -ArgumentList $arguments -WorkingDirectory $InstallRoot
 }
 

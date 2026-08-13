@@ -307,7 +307,7 @@ CameraLocalConsoleWatchdog
 
 因此它不仅能处理电脑重启后的自动启动，也能处理 3000 进程意外退出后的自动恢复。
 
-现场默认双击 `start-all.cmd` 不显示终端窗口，会先打开“正在启动本地控制台”等待页；3000 服务就绪后自动跳转到控制台。日志在控制台“运行日志”里查看。调试人员如果需要看终端，可以运行 `start-all.cmd /console`。
+现场默认双击 `start-all.cmd` 会打开运行窗口，并自动打开控制台页面；计划任务自恢复时使用 `start-all.cmd /minimized /no-browser`，降低客户误关风险。
 
 ## Windows 本机更新
 

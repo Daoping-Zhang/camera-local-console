@@ -189,11 +189,9 @@ cd /d "%~dp0"
 
 set "NO_BROWSER=0"
 set "START_MINIMIZED=0"
-set "START_CONSOLE=0"
 for %%A in (%*) do (
   if /i "%%A"=="/no-browser" set "NO_BROWSER=1"
   if /i "%%A"=="/minimized" set "START_MINIMIZED=1"
-  if /i "%%A"=="/console" set "START_CONSOLE=1"
 )
 
 set "APP_DIR=%~dp0app"
@@ -244,73 +242,14 @@ set "GATEWAY_URL=http://127.0.0.1:%PORT%"
 set "HIK_SDK_DIR=%~dp0sdk\hikvision"
 set "COLLECTOR_ADAPTER=hikvision"
 
-if "%NO_BROWSER%"=="0" powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0open-starting-page.ps1" -Port "%PORT%" -InstallRoot "%~dp0"
-
-if "%START_CONSOLE%"=="1" (
-  if "%START_MINIMIZED%"=="1" (
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0start-console.ps1" -InstallRoot "%~dp0" -Console -Minimized
-  ) else (
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0start-console.ps1" -InstallRoot "%~dp0" -Console
-  )
+if "%START_MINIMIZED%"=="1" (
+  start "camera-console" /min cmd /k ""%NODE_EXE%" "%APP_DIR%\src\server.js""
 ) else (
-  powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "%~dp0start-console.ps1" -InstallRoot "%~dp0"
+  start "camera-console" cmd /k ""%NODE_EXE%" "%APP_DIR%\src\server.js""
 )
 timeout /t 2 /nobreak >nul
+if "%NO_BROWSER%"=="0" start "" "http://127.0.0.1:%PORT%"
 '@ | Set-Content -Path (Join-Path $packageDir "start-all.cmd") -Encoding ASCII
-
-@'
-param(
-  [string]$InstallRoot = $PSScriptRoot,
-  [switch]$Console,
-  [switch]$Minimized
-)
-
-$ErrorActionPreference = "Stop"
-$InstallRoot = (Resolve-Path -LiteralPath $InstallRoot).Path
-$appDir = Join-Path $InstallRoot "app"
-$portsFile = Join-Path $InstallRoot "config\ports.env"
-$port = "3000"
-$collectorPort = "3100"
-if (Test-Path -LiteralPath $portsFile) {
-  foreach ($line in Get-Content -LiteralPath $portsFile) {
-    if ($line -match "^\s*PORT\s*=\s*(\d+)\s*$") {
-      $port = $Matches[1]
-    }
-    if ($line -match "^\s*COLLECTOR_PORT\s*=\s*(\d+)\s*$") {
-      $collectorPort = $Matches[1]
-    }
-  }
-}
-
-$nodeExe = Join-Path $InstallRoot "runtime\node\bin\node.exe"
-if (-not (Test-Path -LiteralPath $nodeExe)) {
-  $nodeExe = Join-Path $InstallRoot "runtime\node\node.exe"
-}
-if (-not (Test-Path -LiteralPath $nodeExe)) {
-  $nodeExe = "node"
-}
-
-$serverScript = Join-Path $appDir "src\server.js"
-if (-not (Test-Path -LiteralPath $serverScript)) {
-  throw "server.js not found: $serverScript"
-}
-
-$env:PORT = $port
-$env:COLLECTOR_PORT = $collectorPort
-$env:LOCAL_COLLECTOR_URL = "http://127.0.0.1:$collectorPort"
-$env:GATEWAY_URL = "http://127.0.0.1:$port"
-$env:HIK_SDK_DIR = Join-Path $InstallRoot "sdk\hikvision"
-$pythonPath = Join-Path $InstallRoot "runtime\python\python.exe"
-$env:PYTHON_PATH = if (Test-Path -LiteralPath $pythonPath) { $pythonPath } else { "python" }
-$env:COLLECTOR_ADAPTER = "hikvision"
-
-if ($Console) {
-  $windowStyle = if ($Minimized) { "Minimized" } else { "Normal" }
-  Start-Process -FilePath "cmd.exe" -ArgumentList @("/k", "`"$nodeExe`" `"$serverScript`"") -WorkingDirectory $appDir -WindowStyle $windowStyle
-} else {
-  Start-Process -FilePath $nodeExe -ArgumentList @($serverScript) -WorkingDirectory $appDir -WindowStyle Hidden
-}
-'@ | Set-Content -Path (Join-Path $packageDir "start-console.ps1") -Encoding ASCII
 
 @'
 @echo off
@@ -323,77 +262,6 @@ if exist "%~dp0config\ports.env" (
 )
 start "" "http://127.0.0.1:%PORT%"
 '@ | Set-Content -Path (Join-Path $packageDir "open-console.cmd") -Encoding ASCII
-
-@'
-param(
-  [string]$Port = "3000",
-  [string]$InstallRoot = $PSScriptRoot
-)
-
-$ErrorActionPreference = "Stop"
-$InstallRoot = (Resolve-Path -LiteralPath $InstallRoot).Path
-$startupDir = Join-Path $InstallRoot ".startup"
-New-Item -ItemType Directory -Force -Path $startupDir | Out-Null
-$consoleUrl = "http://127.0.0.1:$Port"
-$healthUrl = "$consoleUrl/api/state"
-$pagePath = Join-Path $startupDir "console-starting.html"
-
-@"
-<!doctype html>
-<html lang="zh-CN">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>正在启动本地控制台</title>
-  <style>
-    body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f5f7fb;color:#111827;font-family:Arial,"Microsoft YaHei",sans-serif}
-    main{width:min(520px,calc(100vw - 32px));background:white;border:1px solid #d8dee9;border-radius:10px;padding:24px;box-shadow:0 18px 50px rgba(15,23,42,.08)}
-    h1,p{margin:0}
-    h1{font-size:22px}
-    p{margin-top:10px;color:#64748b;line-height:1.6}
-    .bar{height:8px;background:#e5e7eb;border-radius:999px;overflow:hidden;margin-top:18px}
-    .bar span{display:block;width:45%;height:100%;background:#047857;border-radius:999px;animation:move 1.2s infinite ease-in-out}
-    .actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}
-    a{display:inline-flex;align-items:center;min-height:36px;padding:0 14px;border-radius:6px;background:#047857;color:white;text-decoration:none;font-weight:700}
-    a.secondary{background:white;color:#344054;border:1px solid #cbd5e1}
-    @keyframes move{0%{transform:translateX(-110%)}100%{transform:translateX(240%)}}
-  </style>
-</head>
-<body>
-  <main>
-    <h1>正在启动本地控制台</h1>
-    <p id="status">服务正在后台启动，启动完成后会自动进入控制台。</p>
-    <div class="bar"><span></span></div>
-    <div class="actions">
-      <a href="$consoleUrl">手动打开控制台</a>
-      <a class="secondary" href="$healthUrl">查看服务状态</a>
-    </div>
-  </main>
-  <script>
-    const consoleUrl = "$consoleUrl";
-    const healthUrl = "$healthUrl";
-    let attempts = 0;
-    async function check() {
-      attempts += 1;
-      try {
-        await fetch(healthUrl + "?t=" + Date.now(), { cache: "no-store", mode: "no-cors" });
-        document.getElementById("status").textContent = "启动完成，正在进入控制台...";
-        location.href = consoleUrl;
-        return;
-      } catch {}
-      document.getElementById("status").textContent = attempts > 20
-        ? "启动时间较长，请稍等，或点击下方按钮手动打开控制台。"
-        : "服务正在后台启动，启动完成后会自动进入控制台。";
-      setTimeout(check, 1200);
-    }
-    setTimeout(check, 800);
-  </script>
-</body>
-</html>
-"@ | Set-Content -LiteralPath $pagePath -Encoding UTF8
-
-Start-Process -FilePath $pagePath
-'@ | Set-Content -Path (Join-Path $packageDir "open-starting-page.ps1") -Encoding UTF8
 
 @'
 @echo off
@@ -516,60 +384,39 @@ if (-not (Test-Path -LiteralPath $startCmd)) {
 }
 
 Write-Host "Camera local console is not healthy. Starting..."
-Start-Process -FilePath $startCmd -ArgumentList "/no-browser" -WorkingDirectory $InstallRoot
+Start-Process -FilePath $startCmd -ArgumentList "/minimized /no-browser" -WorkingDirectory $InstallRoot
 '@ | Set-Content -Path (Join-Path $packageDir "watchdog-autostart.ps1") -Encoding ASCII
 
 @"
-摄像头本地控制台 Windows 安装包
+camera-local-console Windows package
 
-一、启动
-  双击 start-all.cmd
-  默认后台启动，不显示终端窗口，会先打开“正在启动本地控制台”等待页。
+Start:
+  start-all.cmd
+  start-all.cmd /minimized /no-browser
 
-  不打开浏览器：
-    start-all.cmd /no-browser
-
-  调试时显示终端：
-    start-all.cmd /console
-
-  调试时显示终端但最小化：
-    start-all.cmd /console /minimized /no-browser
-
-  内部启动脚本：
-    start-console.ps1
-
-二、打开控制台
+Open console:
   open-console.cmd
 
-  默认地址：
-    http://127.0.0.1:3000
-
-三、停止
+Stop:
   stop-all.cmd
 
-四、更新
+Update:
   update.cmd
 
-  推荐在 3000 控制台的“版本更新”页面里执行在线更新。
-
-五、自启动和自恢复
+Auto start:
   enable-autostart.cmd
   disable-autostart.cmd
+  autostart-task.ps1
+  watchdog-autostart.ps1
+  Enable creates a Windows Scheduled Task named CameraLocalConsoleWatchdog.
+  The task runs on logon and every 1 minute. If the console is not healthy, it starts start-all.cmd.
 
-  启用后会创建 Windows 计划任务：
-    CameraLocalConsoleWatchdog
+Ports:
+  Default console:   http://127.0.0.1:3000
+  Default collector: http://127.0.0.1:3100
+  If a port is already in use, edit config\ports.env and run start-all.cmd again.
 
-  计划任务会在用户登录时运行，并且每 1 分钟检查一次。
-  如果本地控制台不可访问，会自动后台拉起 start-all.cmd。
-
-六、端口
-  本地控制台：http://127.0.0.1:3000
-  本地采集器：http://127.0.0.1:3100
-
-  如果端口被占用，请修改：
-    config\ports.env
-
-七、海康 SDK 目录
+SDK path:
   sdk\hikvision
 "@ | Set-Content -Path (Join-Path $packageDir "README-WINDOWS.txt") -Encoding UTF8
 
