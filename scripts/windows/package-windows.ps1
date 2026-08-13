@@ -194,8 +194,6 @@ set "COLLECTOR_ADAPTER=hikvision"
 
 start "camera-console-3000" cmd /k ""%NODE_EXE%" "%APP_DIR%\src\server.js""
 timeout /t 2 /nobreak >nul
-start "camera-collector-3100" cmd /k "cd /d "%APP_DIR%" && "%NODE_EXE%" scripts\runtime\collector-server.js"
-timeout /t 2 /nobreak >nul
 start "" "http://127.0.0.1:3000"
 '@ | Set-Content -Path (Join-Path $packageDir "start-all.cmd") -Encoding ASCII
 
@@ -213,7 +211,6 @@ pause
 @'
 @echo off
 taskkill /FI "WINDOWTITLE eq camera-console-3000*" /T /F >nul 2>nul
-taskkill /FI "WINDOWTITLE eq camera-collector-3100*" /T /F >nul 2>nul
 echo stopped
 pause
 '@ | Set-Content -Path (Join-Path $packageDir "stop-all.cmd") -Encoding ASCII

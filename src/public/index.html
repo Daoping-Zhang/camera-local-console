@@ -128,7 +128,7 @@
       <div class="section-head">
         <div>
           <h2>本地采集器</h2>
-          <p class="hint">在线表示采集器已向 3000 回传心跳；设备状态会显示 SDK worker 的连接结果。</p>
+          <p class="hint">3000 会自动启动和管理本地采集器；设备状态会显示 SDK worker 的连接结果。</p>
         </div>
         <button id="refreshCollectorsBtn" class="secondary">刷新状态</button>
       </div>
@@ -137,11 +137,11 @@
         <div class="band-head">
           <div>
             <h3>连接配置</h3>
-            <p class="hint">控制台会通过这个地址检测采集器，并把摄像头注册信息下发过去。</p>
+            <p class="hint">本机地址会由 3000 自动拉起；保存配置后会自动重新下发摄像头快照。</p>
           </div>
           <div class="actions">
             <button id="saveCollectorConfigBtn" class="secondary">保存地址</button>
-            <button id="testCollectorBtn">测试连接</button>
+            <button id="testCollectorBtn">检查并下发</button>
           </div>
         </div>
         <div class="single-field">
@@ -167,7 +167,7 @@
         <div class="band-head">
           <div>
             <h3>采集器状态</h3>
-            <p id="manualCollectorState" class="hint">摄像头注册后，本地采集器会连接 SDK，并把事件回传给 3000。</p>
+            <p id="manualCollectorState" class="hint">本地采集器由 3000 自动维护，并把心跳和事件回传给 3000。</p>
           </div>
           <button id="collectorTestEventBtn" class="secondary">发送测试事件</button>
         </div>

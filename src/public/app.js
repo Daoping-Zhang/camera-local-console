@@ -805,10 +805,10 @@ async function testCollector() {
       method: "POST",
       body: JSON.stringify({ collectorUrl: collectorUrlValue() })
     });
-    setText("downCollectorState", `采集器可访问：${data.result?.collector?.collectorId || "ok"}`);
+    setText("downCollectorState", `采集器已同步：${data.result?.collector?.collectorId || "ok"}`);
     await refresh();
   } catch (error) {
-    setText("downCollectorState", `采集器测试失败：${error.message}`);
+    setText("downCollectorState", `采集器同步失败：${error.message}`);
     showError(error);
   }
 }
@@ -901,7 +901,7 @@ function renderCollectors(items) {
   setValue("collectorHeartbeatUrl", `${location.origin}/api/collector/heartbeat`);
   const container = $("collectors");
   if (!container) return;
-  container.innerHTML = collectors.map(renderCollectorCard).join("") || `<div class="empty-state">暂无采集器。请先启动本地采集器，再点击测试。</div>`;
+  container.innerHTML = collectors.map(renderCollectorCard).join("") || `<div class="empty-state">暂无采集器。3000 会自动尝试启动本地采集器，也可以点击“检查并下发”。</div>`;
   container.querySelectorAll('[data-action="collector-delete"]').forEach((button) => {
     button.onclick = () => deleteCollectorDevice(button).catch(showError);
   });

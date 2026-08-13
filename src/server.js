@@ -21,9 +21,11 @@ if (process.env.LEGACY_HIK_BASE_URL) {
 }
 const recentEvents = [];
 const collectors = new Map();
+let collectorProcess = null;
 let collectorRefreshPromise = null;
 let lastCollectorRefreshAt = 0;
 const COLLECTOR_REFRESH_INTERVAL_MS = 5_000;
+const MANAGED_COLLECTOR_ID = "collector-local-adapter";
 const debugShops = [
   { id: "10001", name: "本地调试门店 A" },
   { id: "10002", name: "本地调试门店 B" }
@@ -44,6 +46,7 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, HOST, () => {
   logger.info("local console started", { host: HOST, port: PORT });
+  ensureManagedCollector().catch((error) => logger.warn("managed collector bootstrap failed", { error: error.message }));
   scheduleConfiguredCollectorRefresh({ force: true });
 });
 
@@ -103,6 +106,9 @@ async function handleApi(req, res) {
     saveState(state);
     const result = await collectorGet(collectorUrl, "/api/health");
     discoverCollector(result, collectorUrl);
+    await applyCollectorSnapshot(collectorUrl).catch((error) => {
+      logger.warn("collector snapshot apply failed after health check", { error: error.message });
+    });
     sendJson(res, 200, { ok: true, result });
     return;
   }
@@ -183,6 +189,7 @@ async function handleApi(req, res) {
       savePassword: Boolean(body.cameraDefaults?.savePassword)
     };
     saveState(state);
+    scheduleConfiguredCollectorRefresh({ force: true });
     sendJson(res, 200, { ok: true, state: publicState() });
     return;
   }
@@ -202,6 +209,7 @@ async function handleApi(req, res) {
     state.devices.unshift({ ...record, localId: `${Date.now()}`, remote });
     state.devices = dedupeDeviceRecords(state.devices).slice(0, 50);
     saveState(state);
+    scheduleConfiguredCollectorRefresh({ force: true });
     logger.info("device bound", { shopId: record.shopId, macAddress: record.macAddress, type: record.type });
     sendJson(res, 200, { ok: true, record, remote, state: publicState() });
     return;
@@ -219,6 +227,7 @@ async function handleApi(req, res) {
       return deviceKey !== key;
     });
     saveState(state);
+    scheduleConfiguredCollectorRefresh({ force: true });
     logger.info("device deleted locally", { deviceKey: key, deleted: before - state.devices.length });
     sendJson(res, 200, { ok: true, deleted: before - state.devices.length, state: publicState() });
     return;
@@ -299,6 +308,9 @@ async function registerDeviceFlow(body) {
   state.devices.unshift({ ...record, localId: `${Date.now()}`, remote, collector });
   state.devices = dedupeDeviceRecords(state.devices).slice(0, 50);
   saveState(state);
+  await applyCollectorSnapshot(collectorUrl).catch((error) => {
+    logger.warn("collector snapshot apply failed after register flow", { error: error.message });
+  });
   steps[steps.length - 1] = { name: "local-device-record", status: "success", result: remote };
 
   logger.info("device register flow completed", {
@@ -327,34 +339,92 @@ function scheduleConfiguredCollectorRefresh(options = {}) {
 }
 
 async function refreshConfiguredCollector(collectorUrl) {
+  await ensureManagedCollector();
   await refreshCollectorSnapshot(collectorUrl);
-  await restoreSavedDevicesToCollector(collectorUrl);
+  await applyCollectorSnapshot(collectorUrl);
 }
 
-async function restoreSavedDevicesToCollector(collectorUrl) {
-  const savedDevices = Array.isArray(state.devices) ? state.devices : [];
-  if (!savedDevices.length) return;
-  const remoteDevices = listCollectorDevices();
-  let restored = false;
-  for (const device of savedDevices) {
-    if (!device.password && !device.sdk?.password) continue;
-    const key = deviceIndexCode(device);
-    if (!key || remoteDevices.some((item) => deviceIndexCode(item) === key)) continue;
-    try {
-      const collector = await collectorPost(collectorUrl, "/api/devices/register", buildCollectorDeviceConfig(device));
-      device.collector = collector;
-      restored = true;
-      logger.info("saved device restored to collector", { collectorUrl, deviceKey: key });
-    } catch (error) {
-      logger.warn("saved device restore failed", { collectorUrl, deviceKey: key, error: error.message });
+async function ensureManagedCollector() {
+  const collectorUrl = state.localCollector?.baseUrl;
+  if (!collectorUrl || state.localCollector?.autoConnect === false) return;
+  if (!isLocalCollectorUrl(collectorUrl)) return;
+  if (await isCollectorReachable(collectorUrl)) return;
+  startManagedCollector();
+  await waitForCollectorReachable(collectorUrl);
+}
+
+async function isCollectorReachable(collectorUrl) {
+  try {
+    await collectorGet(collectorUrl, "/api/health");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function waitForCollectorReachable(collectorUrl, timeoutMs = 4_000) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (await isCollectorReachable(collectorUrl)) return true;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  return false;
+}
+
+function startManagedCollector() {
+  if (collectorProcess && !collectorProcess.killed) return;
+  const scriptPath = path.join(__dirname, "..", "scripts", "runtime", "collector-server.js");
+  const collectorUrl = new URL(state.localCollector?.baseUrl || "http://127.0.0.1:3100");
+  const env = {
+    ...process.env,
+    COLLECTOR_ID: MANAGED_COLLECTOR_ID,
+    COLLECTOR_PORT: collectorUrl.port || "3100",
+    GATEWAY_URL: `http://${HOST}:${PORT}`,
+    COLLECTOR_ADAPTER: process.env.COLLECTOR_ADAPTER || "hikvision",
+    PYTHON_PATH: process.env.PYTHON_PATH || "python",
+    HIK_SDK_DIR: process.env.HIK_SDK_DIR || ""
+  };
+  collectorProcess = spawn(process.execPath, [scriptPath], {
+    cwd: path.join(__dirname, ".."),
+    env,
+    stdio: ["ignore", "pipe", "pipe"],
+    detached: false
+  });
+  logger.info("managed collector started", { pid: collectorProcess.pid, collectorUrl: state.localCollector?.baseUrl });
+  collectorProcess.stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split(/\r?\n/).filter(Boolean)) {
+      logger.info("managed collector output", { line });
     }
+  });
+  collectorProcess.stderr.on("data", (chunk) => {
+    for (const line of String(chunk).split(/\r?\n/).filter(Boolean)) {
+      logger.warn("managed collector error", { line });
+    }
+  });
+  collectorProcess.on("exit", (code, signal) => {
+    logger.warn("managed collector exited", { code, signal });
+    collectorProcess = null;
+  });
+  collectorProcess.on("error", (error) => {
+    logger.warn("managed collector start failed", { error: error.message });
+    collectorProcess = null;
+  });
+}
+
+function isLocalCollectorUrl(value) {
+  try {
+    const url = new URL(value);
+    return ["127.0.0.1", "localhost", "::1"].includes(url.hostname);
+  } catch {
+    return false;
   }
-  if (restored) {
-    saveState(state);
-    await refreshCollectorSnapshot(collectorUrl).catch((error) => {
-      logger.warn("collector snapshot refresh failed after restore", { error: error.message });
-    });
-  }
+}
+
+async function applyCollectorSnapshot(collectorUrl) {
+  const snapshot = buildCollectorSnapshot();
+  const result = await collectorPost(collectorUrl, "/api/runtime/apply-snapshot", snapshot);
+  discoverCollector(result, collectorUrl);
+  return result;
 }
 
 function listCollectorDevices() {
@@ -371,6 +441,22 @@ function dedupeDeviceRecords(devices) {
     output.push(device);
   }
   return output;
+}
+
+function buildCollectorSnapshot() {
+  return {
+    gatewayUrl: `http://${HOST}:${PORT}`,
+    collector: {
+      collectorId: MANAGED_COLLECTOR_ID,
+      adapter: process.env.COLLECTOR_ADAPTER || "hikvision"
+    },
+    cameraDefaults: {
+      username: state.cameraDefaults?.username || "admin",
+      sdkPort: Number(state.cameraDefaults?.sdkPort || 8000),
+      savePassword: Boolean(state.cameraDefaults?.savePassword)
+    },
+    devices: dedupeDeviceRecords(state.devices).map(buildCollectorDeviceConfig)
+  };
 }
 
 function buildDeviceRecord(body) {

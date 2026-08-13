@@ -13,6 +13,7 @@ const sdkDir = process.env.HIK_SDK_DIR || defaultSdkDir();
 let gatewayUrl = (process.env.GATEWAY_URL || "").replace(/\/+$/, "");
 const devices = new Map();
 const workers = new Map();
+const deviceFingerprints = new Map();
 const logs = [];
 let lastHeartbeatAt = "";
 let lastEventAt = "";
@@ -40,11 +41,18 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 200, { ok: true, logs });
       return;
     }
+    if (req.method === "POST" && url.pathname === "/api/runtime/apply-snapshot") {
+      const body = await readJson(req);
+      const result = await applyRuntimeSnapshot(body);
+      sendJson(res, 200, { ok: true, collectorId, ...result, collector: publicState() });
+      return;
+    }
     if (req.method === "POST" && url.pathname === "/api/devices/register") {
       const body = await readJson(req);
       gatewayUrl = (body.gatewayUrl || gatewayUrl).replace(/\/+$/, "");
       const device = await connectCamera(normalizeDevice(body));
       devices.set(device.deviceKey, device);
+      deviceFingerprints.set(device.deviceKey, deviceFingerprint(device));
       await sendHeartbeat();
       writeLog("info", "device registered", { deviceKey: device.deviceKey, ipAddress: device.ipAddress, role: device.role });
       sendJson(res, 200, { ok: true, collectorId, deviceKey: device.deviceKey, status: "registered", connectionStatus: device.connectionStatus, device });
@@ -56,6 +64,7 @@ const server = http.createServer(async (req, res) => {
       if (!deviceKey) throw new Error("deviceKey is required");
       stopWorker(deviceKey);
       const existed = devices.delete(deviceKey);
+      deviceFingerprints.delete(deviceKey);
       await sendHeartbeat();
       writeLog("info", "device deleted", { deviceKey, existed });
       sendJson(res, 200, { ok: true, collectorId, deviceKey, deleted: existed });
@@ -128,6 +137,78 @@ function normalizeDevice(body) {
     connectionStatus: "pending",
     registeredAt: new Date().toISOString()
   };
+}
+
+async function applyRuntimeSnapshot(snapshot) {
+  gatewayUrl = String(snapshot.gatewayUrl || gatewayUrl || "").replace(/\/+$/, "");
+  const snapshotDevices = Array.isArray(snapshot.devices) ? snapshot.devices : [];
+  const nextKeys = new Set();
+  const result = { applied: 0, unchanged: 0, removed: 0, skipped: 0, errors: [] };
+
+  for (const item of snapshotDevices) {
+    let device = null;
+    try {
+      device = normalizeDevice(item);
+      nextKeys.add(device.deviceKey);
+      const fingerprint = deviceFingerprint(device);
+      if (deviceFingerprints.get(device.deviceKey) === fingerprint && devices.has(device.deviceKey)) {
+        result.unchanged += 1;
+        continue;
+      }
+      if (!device.sdk.password && (adapterMode === "hikvision" || device.sdk.vendor === "hikvision-real")) {
+        const previous = devices.get(device.deviceKey);
+        if (previous) {
+          devices.set(device.deviceKey, {
+            ...previous,
+            ...device,
+            status: "pending",
+            connectionStatus: "needs-password",
+            lastError: "摄像头密码未保存，请在 3000 控制台重新下发"
+          });
+        } else {
+          devices.set(device.deviceKey, {
+            ...device,
+            status: "pending",
+            connectionStatus: "needs-password",
+            lastError: "摄像头密码未保存，请在 3000 控制台重新下发"
+          });
+        }
+        deviceFingerprints.set(device.deviceKey, fingerprint);
+        result.skipped += 1;
+        continue;
+      }
+      const connected = await connectCamera(device);
+      devices.set(device.deviceKey, connected);
+      deviceFingerprints.set(device.deviceKey, fingerprint);
+      result.applied += 1;
+    } catch (error) {
+      result.errors.push({ deviceKey: device?.deviceKey || item.deviceKey || item.macAddress || item.ipAddress || "", error: error.message });
+      writeLog("error", "snapshot device apply failed", { deviceKey: device?.deviceKey, error: error.message });
+    }
+  }
+
+  for (const deviceKey of Array.from(devices.keys())) {
+    if (nextKeys.has(deviceKey)) continue;
+    stopWorker(deviceKey);
+    devices.delete(deviceKey);
+    deviceFingerprints.delete(deviceKey);
+    result.removed += 1;
+  }
+
+  await sendHeartbeat();
+  writeLog("info", "runtime snapshot applied", result);
+  return result;
+}
+
+function deviceFingerprint(device) {
+  return JSON.stringify({
+    deviceKey: device.deviceKey,
+    ipAddress: device.ipAddress,
+    macAddress: device.macAddress,
+    role: device.role,
+    type: device.type,
+    sdk: device.sdk
+  });
 }
 
 function publicDevice(device) {
