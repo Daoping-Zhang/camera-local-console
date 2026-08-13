@@ -158,7 +158,7 @@ function Stop-CameraConsole {
   $targetPorts = @([int]$ports.PORT, [int]$ports.COLLECTOR_PORT) | Select-Object -Unique
   foreach ($targetPort in $targetPorts) {
     foreach ($processId in Get-ListeningPids -Port $targetPort) {
-      Write-Host "Stopping process on port $targetPort: $processId"
+      Write-Host ("Stopping process on port {0}: {1}" -f $targetPort, $processId)
       Stop-ProcessTreeByPid -ProcessId $processId
     }
   }
