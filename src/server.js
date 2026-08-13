@@ -903,14 +903,36 @@ function defaultManifestUrl(channel = "stable") {
 
 function releaseState() {
   const release = state.release || {};
-  const channel = release.channel || "stable";
+  const installed = readInstalledVersion();
+  const channel = release.channel || installed.channel || "stable";
   return {
-    version: release.version || readPackageVersion(),
+    version: installed.version || release.version || readPackageVersion(),
     channel,
     manifestUrl: release.manifestUrl || defaultManifestUrl(channel),
     lastCheckAt: release.lastCheckAt || "",
     lastCheckResult: release.lastCheckResult || null
   };
+}
+
+function readInstalledVersion() {
+  const candidates = [
+    path.join(process.cwd(), "version.json"),
+    path.join(__dirname, "..", "..", "version.json"),
+    path.join(__dirname, "..", "version.json")
+  ];
+  for (const file of candidates) {
+    try {
+      if (!fs.existsSync(file)) continue;
+      const parsed = JSON.parse(fs.readFileSync(file, "utf8").replace(/^\uFEFF/, ""));
+      return {
+        version: String(parsed.version || "").trim(),
+        channel: String(parsed.channel || "").trim()
+      };
+    } catch (error) {
+      logger.warn("installed version file read failed", { file, error: error.message });
+    }
+  }
+  return {};
 }
 
 function readPackageVersion() {
@@ -960,7 +982,7 @@ async function checkReleaseChannels(manifestUrl, current) {
         manifestUrl: url,
         currentVersion: current.version,
         latestVersion,
-        updateAvailable: Boolean(latestVersion && latestVersion !== current.version),
+        updateAvailable: isNewerVersion(latestVersion, current.version),
         manifest
       };
     } catch (error) {
@@ -983,6 +1005,29 @@ async function checkReleaseChannels(manifestUrl, current) {
     seen.add(key);
     return true;
   });
+}
+
+function isNewerVersion(latestVersion, currentVersion) {
+  if (!latestVersion) return false;
+  if (!currentVersion) return true;
+  return compareVersions(latestVersion, currentVersion) > 0;
+}
+
+function compareVersions(a, b) {
+  const left = parseVersionParts(a);
+  const right = parseVersionParts(b);
+  for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
+    const delta = (left[index] || 0) - (right[index] || 0);
+    if (delta !== 0) return delta;
+  }
+  return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: "base" });
+}
+
+function parseVersionParts(version) {
+  return String(version || "")
+    .split(/[.+-]/)
+    .map((part) => Number(part))
+    .filter((part) => Number.isFinite(part));
 }
 
 function siblingManifestUrl(manifestUrl, channel) {
