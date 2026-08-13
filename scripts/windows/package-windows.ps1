@@ -281,16 +281,111 @@ pause
 @'
 @echo off
 setlocal
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$startup=[Environment]::GetFolderPath('Startup'); $target=Join-Path (Get-Location) 'start-all.cmd'; $shortcut=Join-Path $startup 'camera-local-console.lnk'; $shell=New-Object -ComObject WScript.Shell; $lnk=$shell.CreateShortcut($shortcut); $lnk.TargetPath=$target; $lnk.Arguments='/minimized /no-browser'; $lnk.WorkingDirectory=(Get-Location).Path; $lnk.IconLocation=$target; $lnk.Save(); Write-Host 'Enabled startup auto-run:' $shortcut"
+cd /d "%~dp0"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0autostart-task.ps1" -InstallRoot "%~dp0" -Enable
 pause
 '@ | Set-Content -Path (Join-Path $packageDir "enable-autostart.cmd") -Encoding ASCII
 
 @'
 @echo off
 setlocal
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$startup=[Environment]::GetFolderPath('Startup'); $shortcut=Join-Path $startup 'camera-local-console.lnk'; if (Test-Path -LiteralPath $shortcut) { Remove-Item -LiteralPath $shortcut -Force; Write-Host 'Disabled startup auto-run:' $shortcut } else { Write-Host 'Startup auto-run was not enabled.' }"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0autostart-task.ps1" -InstallRoot "%~dp0" -Disable
 pause
 '@ | Set-Content -Path (Join-Path $packageDir "disable-autostart.cmd") -Encoding ASCII
+
+@'
+param(
+  [string]$InstallRoot = $PSScriptRoot,
+  [switch]$Enable,
+  [switch]$Disable
+)
+
+$ErrorActionPreference = "Stop"
+$TaskName = "CameraLocalConsoleWatchdog"
+$InstallRoot = (Resolve-Path -LiteralPath $InstallRoot).Path
+
+function Remove-LegacyShortcut {
+  $startup = [Environment]::GetFolderPath("Startup")
+  $shortcut = Join-Path $startup "camera-local-console.lnk"
+  if (Test-Path -LiteralPath $shortcut) {
+    Remove-Item -LiteralPath $shortcut -Force
+    Write-Host "Removed legacy startup shortcut: $shortcut"
+  }
+}
+
+function Register-WatchdogTask {
+  $script = Join-Path $InstallRoot "watchdog-autostart.ps1"
+  if (-not (Test-Path -LiteralPath $script)) {
+    throw "watchdog-autostart.ps1 not found: $script"
+  }
+  $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$script`" -InstallRoot `"$InstallRoot`""
+  $triggerLogon = New-ScheduledTaskTrigger -AtLogOn
+  $triggerRepeat = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 1)
+  $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 5)
+  Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger @($triggerLogon,$triggerRepeat) -Settings $settings -Description "Keep camera local console running." -Force | Out-Null
+  Start-ScheduledTask -TaskName $TaskName
+  Remove-LegacyShortcut
+  Write-Host "Enabled scheduled watchdog: $TaskName"
+}
+
+function Unregister-WatchdogTask {
+  if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
+    Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
+    Write-Host "Disabled scheduled watchdog: $TaskName"
+  } else {
+    Write-Host "Scheduled watchdog was not enabled."
+  }
+  Remove-LegacyShortcut
+}
+
+if ($Enable) {
+  Register-WatchdogTask
+} elseif ($Disable) {
+  Unregister-WatchdogTask
+} else {
+  throw "Use -Enable or -Disable."
+}
+'@ | Set-Content -Path (Join-Path $packageDir "autostart-task.ps1") -Encoding ASCII
+
+@'
+param(
+  [string]$InstallRoot = $PSScriptRoot
+)
+
+$ErrorActionPreference = "Stop"
+$InstallRoot = (Resolve-Path -LiteralPath $InstallRoot).Path
+$portsFile = Join-Path $InstallRoot "config\ports.env"
+$port = "3000"
+if (Test-Path -LiteralPath $portsFile) {
+  foreach ($line in Get-Content -LiteralPath $portsFile) {
+    if ($line -match "^\s*PORT\s*=\s*(\d+)\s*$") {
+      $port = $Matches[1]
+    }
+  }
+}
+
+$healthUrl = "http://127.0.0.1:$port/api/state"
+$healthy = $false
+try {
+  $response = Invoke-WebRequest -Uri $healthUrl -UseBasicParsing -TimeoutSec 5
+  $healthy = $response.StatusCode -ge 200 -and $response.StatusCode -lt 500
+} catch {
+  $healthy = $false
+}
+
+if ($healthy) {
+  Write-Host "Camera local console is healthy: $healthUrl"
+  exit 0
+}
+
+$startCmd = Join-Path $InstallRoot "start-all.cmd"
+if (-not (Test-Path -LiteralPath $startCmd)) {
+  throw "start-all.cmd not found: $startCmd"
+}
+
+Write-Host "Camera local console is not healthy. Starting..."
+Start-Process -FilePath $startCmd -ArgumentList "/minimized /no-browser" -WorkingDirectory $InstallRoot
+'@ | Set-Content -Path (Join-Path $packageDir "watchdog-autostart.ps1") -Encoding ASCII
 
 @"
 camera-local-console Windows package
@@ -311,6 +406,10 @@ Update:
 Auto start:
   enable-autostart.cmd
   disable-autostart.cmd
+  autostart-task.ps1
+  watchdog-autostart.ps1
+  Enable creates a Windows Scheduled Task named CameraLocalConsoleWatchdog.
+  The task runs on logon and every 1 minute. If the console is not healthy, it starts start-all.cmd.
 
 Ports:
   Default console:   http://127.0.0.1:3000

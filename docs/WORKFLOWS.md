@@ -276,25 +276,36 @@ PORT=3000
 COLLECTOR_PORT=3100
 ```
 
-## Windows 客户端自动启动
+## Windows 客户端自启动与自恢复
 
-启用开机自启：
+启用自启动与自恢复：
 
 ```bat
 enable-autostart.cmd
 ```
 
-取消开机自启：
+取消自启动与自恢复：
 
 ```bat
 disable-autostart.cmd
 ```
 
-自启会运行：
+启用后会注册 Windows 计划任务：
 
-```bat
-start-all.cmd /minimized /no-browser
+```text
+CameraLocalConsoleWatchdog
 ```
+
+任务行为：
+
+```text
+1. Windows 用户登录时执行一次
+2. 每 1 分钟执行一次健康检查
+3. 检查 http://127.0.0.1:PORT/api/state
+4. 如果 3000 控制台不可访问，自动运行 start-all.cmd /minimized /no-browser
+```
+
+因此它不仅能处理电脑重启后的自动启动，也能处理 3000 进程意外退出后的自动恢复。
 
 ## Windows 本机更新
 

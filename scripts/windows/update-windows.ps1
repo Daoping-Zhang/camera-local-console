@@ -200,27 +200,24 @@ function Copy-UpdateContent {
   }
 }
 
-function Sync-AutostartShortcut {
+function Sync-AutostartTask {
   param([string]$InstallRoot)
-  $startup = [Environment]::GetFolderPath("Startup")
-  $shortcut = Join-Path $startup "camera-local-console.lnk"
-  if (-not (Test-Path -LiteralPath $shortcut)) {
-    Write-Host "Startup auto-run is not enabled; skip shortcut sync."
+  $task = "CameraLocalConsoleWatchdog"
+  if (-not (Get-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue)) {
+    Write-Host "Scheduled watchdog is not enabled; skip task sync."
     return
   }
-  $target = Join-Path $InstallRoot "start-all.cmd"
-  if (-not (Test-Path -LiteralPath $target)) {
-    Write-Host "start-all.cmd was not found; skip shortcut sync."
+  $script = Join-Path $InstallRoot "watchdog-autostart.ps1"
+  if (-not (Test-Path -LiteralPath $script)) {
+    Write-Host "watchdog-autostart.ps1 was not found; skip task sync."
     return
   }
-  $shell = New-Object -ComObject WScript.Shell
-  $link = $shell.CreateShortcut($shortcut)
-  $link.TargetPath = $target
-  $link.Arguments = "/minimized /no-browser"
-  $link.WorkingDirectory = $InstallRoot
-  $link.IconLocation = $target
-  $link.Save()
-  Write-Host "Startup auto-run shortcut synced: $shortcut"
+  $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$script`" -InstallRoot `"$InstallRoot`""
+  $triggerLogon = New-ScheduledTaskTrigger -AtLogOn
+  $triggerRepeat = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 1)
+  $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 5)
+  Register-ScheduledTask -TaskName $task -Action $action -Trigger @($triggerLogon,$triggerRepeat) -Settings $settings -Description "Keep camera local console running." -Force | Out-Null
+  Write-Host "Scheduled watchdog synced: $task"
 }
 
 function Restore-Backup {
@@ -405,7 +402,7 @@ try {
 
   Write-Host "Update completed. Backup: $backupPath"
   Write-ProgressEvent -Stage "restart" -Percent 0 -Message "Restarting console..."
-  Sync-AutostartShortcut -InstallRoot $installRoot
+  Sync-AutostartTask -InstallRoot $installRoot
   if ($RestartMode -eq "None") {
     Write-Host "Restart skipped."
     Write-UpdateState -StatePath $statePath -State @{
