@@ -189,11 +189,11 @@ cd /d "%~dp0"
 
 set "NO_BROWSER=0"
 set "START_MINIMIZED=0"
-set "START_BACKGROUND=0"
+set "START_CONSOLE=0"
 for %%A in (%*) do (
   if /i "%%A"=="/no-browser" set "NO_BROWSER=1"
   if /i "%%A"=="/minimized" set "START_MINIMIZED=1"
-  if /i "%%A"=="/background" set "START_BACKGROUND=1"
+  if /i "%%A"=="/console" set "START_CONSOLE=1"
 )
 
 set "APP_DIR=%~dp0app"
@@ -244,14 +244,14 @@ set "GATEWAY_URL=http://127.0.0.1:%PORT%"
 set "HIK_SDK_DIR=%~dp0sdk\hikvision"
 set "COLLECTOR_ADAPTER=hikvision"
 
-if "%START_BACKGROUND%"=="1" (
-  powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command "Start-Process -FilePath $env:NODE_EXE -ArgumentList @((Join-Path $env:APP_DIR 'src\server.js')) -WorkingDirectory $env:APP_DIR -WindowStyle Hidden"
-) else (
+if "%START_CONSOLE%"=="1" (
   if "%START_MINIMIZED%"=="1" (
     start "camera-console" /min cmd /k ""%NODE_EXE%" "%APP_DIR%\src\server.js""
   ) else (
     start "camera-console" cmd /k ""%NODE_EXE%" "%APP_DIR%\src\server.js""
   )
+) else (
+  powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command "Start-Process -FilePath $env:NODE_EXE -ArgumentList @((Join-Path $env:APP_DIR 'src\server.js')) -WorkingDirectory $env:APP_DIR -WindowStyle Hidden"
 )
 timeout /t 2 /nobreak >nul
 if "%NO_BROWSER%"=="0" start "" "http://127.0.0.1:%PORT%"
@@ -390,7 +390,7 @@ if (-not (Test-Path -LiteralPath $startCmd)) {
 }
 
 Write-Host "Camera local console is not healthy. Starting..."
-Start-Process -FilePath $startCmd -ArgumentList "/background /no-browser" -WorkingDirectory $InstallRoot
+Start-Process -FilePath $startCmd -ArgumentList "/no-browser" -WorkingDirectory $InstallRoot
 '@ | Set-Content -Path (Join-Path $packageDir "watchdog-autostart.ps1") -Encoding ASCII
 
 @"
@@ -398,8 +398,9 @@ camera-local-console Windows package
 
 Start:
   start-all.cmd
-  start-all.cmd /minimized /no-browser
-  start-all.cmd /background /no-browser
+  start-all.cmd /no-browser
+  start-all.cmd /console
+  start-all.cmd /console /minimized /no-browser
 
 Open console:
   open-console.cmd

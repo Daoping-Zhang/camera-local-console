@@ -302,12 +302,12 @@ CameraLocalConsoleWatchdog
 1. Windows 用户登录时执行一次
 2. 每 1 分钟执行一次健康检查
 3. 检查 http://127.0.0.1:PORT/api/state
-4. 如果 3000 控制台不可访问，自动后台运行 start-all.cmd /background /no-browser
+4. 如果 3000 控制台不可访问，自动后台运行 start-all.cmd /no-browser
 ```
 
 因此它不仅能处理电脑重启后的自动启动，也能处理 3000 进程意外退出后的自动恢复。
 
-首次现场调试可以直接双击 `start-all.cmd`，保留终端窗口方便看错误；启用计划任务后，自恢复启动会隐藏终端窗口，降低客户误关风险。
+现场默认双击 `start-all.cmd` 不显示终端窗口，只打开控制台页面；日志在控制台“运行日志”里查看。调试人员如果需要看终端，可以运行 `start-all.cmd /console`。
 
 ## Windows 本机更新
 
