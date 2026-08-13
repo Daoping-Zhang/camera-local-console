@@ -274,7 +274,9 @@ pause
 @echo off
 setlocal
 cd /d "%~dp0"
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0stop-all.ps1" -InstallRoot "%~dp0"
+set "INSTALL_ROOT=%~dp0"
+if "%INSTALL_ROOT:~-1%"=="\" set "INSTALL_ROOT=%INSTALL_ROOT:~0,-1%"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0stop-all.ps1" -InstallRoot "%INSTALL_ROOT%"
 pause
 '@ | Set-Content -Path (Join-Path $packageDir "stop-all.cmd") -Encoding ASCII
 
@@ -282,14 +284,19 @@ pause
 @echo off
 setlocal
 cd /d "%~dp0"
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0autostart-task.ps1" -InstallRoot "%~dp0" -Enable
+set "INSTALL_ROOT=%~dp0"
+if "%INSTALL_ROOT:~-1%"=="\" set "INSTALL_ROOT=%INSTALL_ROOT:~0,-1%"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0autostart-task.ps1" -InstallRoot "%INSTALL_ROOT%" -Enable
 pause
 '@ | Set-Content -Path (Join-Path $packageDir "enable-autostart.cmd") -Encoding ASCII
 
 @'
 @echo off
 setlocal
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0autostart-task.ps1" -InstallRoot "%~dp0" -Disable
+cd /d "%~dp0"
+set "INSTALL_ROOT=%~dp0"
+if "%INSTALL_ROOT:~-1%"=="\" set "INSTALL_ROOT=%INSTALL_ROOT:~0,-1%"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0autostart-task.ps1" -InstallRoot "%INSTALL_ROOT%" -Disable
 pause
 '@ | Set-Content -Path (Join-Path $packageDir "disable-autostart.cmd") -Encoding ASCII
 
@@ -302,7 +309,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $TaskName = "CameraLocalConsoleWatchdog"
-$InstallRoot = (Resolve-Path -LiteralPath $InstallRoot).Path
+$InstallRoot = (Resolve-Path -LiteralPath $InstallRoot).Path.TrimEnd("\")
 
 function Remove-LegacyShortcut {
   $startup = [Environment]::GetFolderPath("Startup")
