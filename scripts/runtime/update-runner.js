@@ -54,8 +54,9 @@ function runUpdate() {
   child.on("exit", (code) => {
     exitCode = code;
     finishedAt = new Date().toISOString();
-    status = code === 0 ? "done" : "error";
-    message = code === 0 ? "更新完成，正在返回控制台..." : `更新失败，退出码 ${code}`;
+    const wasRollback = status === "rollback";
+    status = code === 0 ? "done" : wasRollback ? "rollback" : "error";
+    message = code === 0 ? "更新完成，正在返回控制台..." : wasRollback ? "更新失败，已回滚到旧版本" : `更新失败，退出码 ${code}`;
     appendLog(message);
   });
   child.on("error", (error) => {
@@ -91,6 +92,7 @@ function appendLog(line) {
       stage = progress.stage || stage;
       percent = Number.isFinite(Number(progress.percent)) ? Number(progress.percent) : percent;
       message = progress.message || message;
+      if (stage === "rollback") status = "rollback";
       logs.push({ time: progress.time || new Date().toISOString(), line: progress.message || item });
       continue;
     }
@@ -132,7 +134,7 @@ function pageHtml() {
     h1{margin:0 0 8px;font-size:24px}p{margin:0 0 16px;color:#667085}
     .percent{font-size:28px;font-weight:800;color:#07835d;margin:10px 0}
     .bar{height:10px;background:#edf2f7;border-radius:999px;overflow:hidden;margin:18px 0}.bar span{display:block;height:100%;width:0;background:#07835d;transition:width .2s ease}.bar.unknown span{width:35%;animation:pulse 1.4s infinite}
-    .done .bar span{width:100%;animation:none}.error .bar span{width:100%;background:#c62828;animation:none}
+    .done .bar span{width:100%;animation:none}.error .bar span{width:100%;background:#c62828;animation:none}.rollback .bar span{background:#b54708}
     pre{max-height:360px;overflow:auto;background:#0f172a;color:#dbeafe;border-radius:8px;padding:14px;white-space:pre-wrap}
     a{display:inline-block;margin-top:10px;color:#075e45;font-weight:700}
     @keyframes pulse{0%{transform:translateX(-100%)}100%{transform:translateX(280%)}}

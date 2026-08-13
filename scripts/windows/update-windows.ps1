@@ -119,6 +119,68 @@ function Sync-AutostartShortcut {
   Write-Host "Startup auto-run shortcut synced: $shortcut"
 }
 
+function Restore-Backup {
+  param(
+    [string]$BackupPath,
+    [string]$InstallRoot
+  )
+  if (-not (Test-Path -LiteralPath $BackupPath)) {
+    throw "Backup path does not exist: $BackupPath"
+  }
+  Write-ProgressEvent -Stage "rollback" -Percent 0 -Message "正在回滚到旧版本..."
+  Stop-CameraConsole
+  Copy-UpdateContent -SourceRoot $BackupPath -TargetRoot $InstallRoot
+  Write-ProgressEvent -Stage "rollback" -Percent 100 -Message "已回滚到旧版本"
+}
+
+function Start-CameraConsole {
+  param(
+    [string]$InstallRoot,
+    [string]$RestartMode
+  )
+  $startCmd = Join-Path $InstallRoot "start-all.cmd"
+  if (-not (Test-Path -LiteralPath $startCmd)) {
+    throw "start-all.cmd was not found."
+  }
+  $arguments = if ($RestartMode -eq "NoBrowser") { "/minimized /no-browser" } else { "" }
+  Start-Process -FilePath $startCmd -ArgumentList $arguments -WorkingDirectory $InstallRoot
+}
+
+function Read-ConsolePort {
+  param([string]$InstallRoot)
+  $portsFile = Join-Path $InstallRoot "config\ports.env"
+  $port = "3000"
+  if (Test-Path -LiteralPath $portsFile) {
+    foreach ($line in Get-Content -LiteralPath $portsFile) {
+      if ($line -match "^\s*PORT\s*=\s*(\d+)\s*$") {
+        $port = $Matches[1]
+      }
+    }
+  }
+  return $port
+}
+
+function Wait-ConsoleHealthy {
+  param(
+    [string]$InstallRoot,
+    [int]$TimeoutSeconds = 60
+  )
+  $port = Read-ConsolePort -InstallRoot $InstallRoot
+  $url = "http://127.0.0.1:$port/api/state"
+  $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+  while ((Get-Date) -lt $deadline) {
+    try {
+      $result = Invoke-RestMethod -Uri $url -UseBasicParsing -TimeoutSec 3
+      if ($result.ok) {
+        return $true
+      }
+    } catch {
+      Start-Sleep -Seconds 2
+    }
+  }
+  return $false
+}
+
 $installRoot = Resolve-Path $PSScriptRoot
 $versionFile = Join-Path $installRoot "version.json"
 $current = Read-JsonFile -Path $versionFile
@@ -195,30 +257,47 @@ foreach ($item in Get-ChildItem -LiteralPath $installRoot -Force) {
 }
 Write-ProgressEvent -Stage "backup" -Percent 100 -Message "旧版本备份完成"
 
-Write-Host "Applying update..."
-Write-ProgressEvent -Stage "apply" -Percent 0 -Message "正在覆盖新版文件..."
-Copy-UpdateContent -SourceRoot $packageRoot.FullName -TargetRoot $installRoot
-Write-ProgressEvent -Stage "apply" -Percent 100 -Message "新版文件覆盖完成"
+try {
+  Write-Host "Applying update..."
+  Write-ProgressEvent -Stage "apply" -Percent 0 -Message "正在覆盖新版文件..."
+  Copy-UpdateContent -SourceRoot $packageRoot.FullName -TargetRoot $installRoot
+  Write-ProgressEvent -Stage "apply" -Percent 100 -Message "新版文件覆盖完成"
 
-@{
-  version = $latestVersion
-  channel = $currentChannel
-  updatedAt = (Get-Date).ToString("s")
-  manifestUrl = $ManifestUrl
-} | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $versionFile -Encoding UTF8
+  @{
+    version = $latestVersion
+    channel = $currentChannel
+    updatedAt = (Get-Date).ToString("s")
+    manifestUrl = $ManifestUrl
+  } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $versionFile -Encoding UTF8
 
-Write-Host "Update completed. Backup: $backupPath"
-Write-ProgressEvent -Stage "restart" -Percent 0 -Message "正在重启控制台..."
-Sync-AutostartShortcut -InstallRoot $installRoot
-$startCmd = Join-Path $installRoot "start-all.cmd"
-if ($RestartMode -eq "None") {
-  Write-Host "Restart skipped."
-} elseif (Test-Path -LiteralPath $startCmd) {
-  Write-Host "Restarting camera console..."
-  $arguments = if ($RestartMode -eq "NoBrowser") { "/minimized /no-browser" } else { "" }
-  Start-Process -FilePath $startCmd -ArgumentList $arguments -WorkingDirectory $installRoot
-  Write-ProgressEvent -Stage "done" -Percent 100 -Message "更新完成，控制台已重启"
-} else {
-  Write-Host "start-all.cmd was not found. Please start the console manually."
-  Write-ProgressEvent -Stage "done" -Percent 100 -Message "更新完成，请手动启动控制台"
+  Write-Host "Update completed. Backup: $backupPath"
+  Write-ProgressEvent -Stage "restart" -Percent 0 -Message "正在重启控制台..."
+  Sync-AutostartShortcut -InstallRoot $installRoot
+  if ($RestartMode -eq "None") {
+    Write-Host "Restart skipped."
+    Write-ProgressEvent -Stage "done" -Percent 100 -Message "更新完成，未自动重启"
+  } else {
+    Write-Host "Restarting camera console..."
+    Start-CameraConsole -InstallRoot $installRoot -RestartMode $RestartMode
+    Write-ProgressEvent -Stage "health" -Percent 0 -Message "正在确认新版控制台是否可用..."
+    if (-not (Wait-ConsoleHealthy -InstallRoot $installRoot -TimeoutSeconds 60)) {
+      throw "新版控制台 60 秒内没有恢复，准备自动回滚。"
+    }
+    Write-ProgressEvent -Stage "done" -Percent 100 -Message "更新完成，控制台已重启"
+  }
+} catch {
+  $errorMessage = $_.Exception.Message
+  Write-Host "Update failed after backup: $errorMessage"
+  Write-ProgressEvent -Stage "rollback" -Percent 0 -Message "更新失败，正在自动回滚：$errorMessage"
+  Restore-Backup -BackupPath $backupPath -InstallRoot $installRoot
+  if ($RestartMode -ne "None") {
+    Start-CameraConsole -InstallRoot $installRoot -RestartMode $RestartMode
+    if (Wait-ConsoleHealthy -InstallRoot $installRoot -TimeoutSeconds 60) {
+      Write-ProgressEvent -Stage "rollback" -Percent 100 -Message "更新失败，已回滚并启动旧版本"
+    } else {
+      Write-ProgressEvent -Stage "error" -Percent 100 -Message "更新失败，已回滚，但旧版本启动验证失败，请手动检查"
+      throw
+    }
+  }
+  throw "更新失败，已回滚到旧版本：$errorMessage"
 }
