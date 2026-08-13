@@ -281,33 +281,33 @@ COLLECTOR_PORT=3100
 启用自启动与自恢复：
 
 ```bat
-enable-autostart.cmd
+install-service.cmd
 ```
 
 取消自启动与自恢复：
 
 ```bat
-disable-autostart.cmd
+uninstall-service.cmd
 ```
 
-启用后会注册 Windows 计划任务：
+启用后会安装并启动 Windows 服务：
 
 ```text
-CameraLocalConsoleWatchdog
+CameraLocalConsole
 ```
 
-任务行为：
+服务行为：
 
 ```text
-1. Windows 用户登录时执行一次
-2. 每 1 分钟执行一次健康检查
-3. 检查 http://127.0.0.1:PORT/api/state
-4. 如果 3000 控制台不可访问，自动后台运行 start-all.cmd /no-browser
+1. Windows 开机后自动启动
+2. 控制台进程意外退出后自动重启
+3. 后台运行，不会每分钟弹出命令窗口
+4. 在线更新时会先停止服务，更新完成后再启动服务
 ```
 
 因此它不仅能处理电脑重启后的自动启动，也能处理 3000 进程意外退出后的自动恢复。
 
-现场默认双击 `start-all.cmd` 会打开运行窗口，并自动打开控制台页面；计划任务自恢复时使用 `start-all.cmd /minimized /no-browser`，降低客户误关风险。
+`install-service.cmd` 需要右键以管理员身份运行，并且会自动启动服务；`start-service.cmd` 只用于服务已经安装但被手动停止后的维护场景。首次调试仍可双击 `start-all.cmd` 打开运行窗口和控制台页面。
 
 ## Windows 本机更新
 

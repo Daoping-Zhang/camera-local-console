@@ -5,6 +5,7 @@ param(
   [string]$Channel = "local",
   [string]$NodeDir = "",
   [string]$PythonDir = "",
+  [string]$WinSWExe = "",
   [switch]$SkipSdk,
   [switch]$NoZip
 )
@@ -182,6 +183,17 @@ if (-not $SkipSdk) {
   }
 }
 
+$resolvedWinSW = Resolve-OptionalPath @(
+  $WinSWExe,
+  (Join-Path $projectRoot "vendor\winsw\WinSW-x64.exe"),
+  (Join-Path $workspaceRoot "WinSW-x64.exe")
+)
+if ($resolvedWinSW) {
+  Copy-Item -LiteralPath $resolvedWinSW -Destination (Join-Path $packageDir "CameraLocalConsoleService.exe") -Force
+} else {
+  Write-Warning "WinSW service wrapper was not copied. Put WinSW-x64.exe under vendor\winsw or pass -WinSWExe. install-service.cmd will not work without it."
+}
+
 @'
 @echo off
 setlocal
@@ -274,6 +286,14 @@ pause
 @echo off
 setlocal
 cd /d "%~dp0"
+if exist "%~dp0CameraLocalConsoleService.exe" (
+  sc query CameraLocalConsole >nul 2>nul
+  if not errorlevel 1 (
+    "%~dp0CameraLocalConsoleService.exe" stop
+    pause
+    exit /b %errorlevel%
+  )
+)
 set "INSTALL_ROOT=%~dp0"
 if "%INSTALL_ROOT:~-1%"=="\" set "INSTALL_ROOT=%INSTALL_ROOT:~0,-1%"
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0stop-all.ps1" -InstallRoot "%INSTALL_ROOT%"
@@ -284,75 +304,19 @@ pause
 @echo off
 setlocal
 cd /d "%~dp0"
-set "INSTALL_ROOT=%~dp0"
-if "%INSTALL_ROOT:~-1%"=="\" set "INSTALL_ROOT=%INSTALL_ROOT:~0,-1%"
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0autostart-task.ps1" -InstallRoot "%INSTALL_ROOT%" -Enable
-pause
+echo enable-autostart.cmd is kept for compatibility.
+echo Installing Windows Service instead...
+call "%~dp0install-service.cmd"
 '@ | Set-Content -Path (Join-Path $packageDir "enable-autostart.cmd") -Encoding ASCII
 
 @'
 @echo off
 setlocal
 cd /d "%~dp0"
-set "INSTALL_ROOT=%~dp0"
-if "%INSTALL_ROOT:~-1%"=="\" set "INSTALL_ROOT=%INSTALL_ROOT:~0,-1%"
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0autostart-task.ps1" -InstallRoot "%INSTALL_ROOT%" -Disable
-pause
+echo disable-autostart.cmd is kept for compatibility.
+echo Uninstalling Windows Service instead...
+call "%~dp0uninstall-service.cmd"
 '@ | Set-Content -Path (Join-Path $packageDir "disable-autostart.cmd") -Encoding ASCII
-
-@'
-param(
-  [string]$InstallRoot = $PSScriptRoot,
-  [switch]$Enable,
-  [switch]$Disable
-)
-
-$ErrorActionPreference = "Stop"
-$TaskName = "CameraLocalConsoleWatchdog"
-$InstallRoot = (Resolve-Path -LiteralPath $InstallRoot).Path.TrimEnd("\")
-
-function Remove-LegacyShortcut {
-  $startup = [Environment]::GetFolderPath("Startup")
-  $shortcut = Join-Path $startup "camera-local-console.lnk"
-  if (Test-Path -LiteralPath $shortcut) {
-    Remove-Item -LiteralPath $shortcut -Force
-    Write-Host "Removed legacy startup shortcut: $shortcut"
-  }
-}
-
-function Register-WatchdogTask {
-  $script = Join-Path $InstallRoot "watchdog-autostart.ps1"
-  if (-not (Test-Path -LiteralPath $script)) {
-    throw "watchdog-autostart.ps1 not found: $script"
-  }
-  $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$script`" -InstallRoot `"$InstallRoot`""
-  $triggerLogon = New-ScheduledTaskTrigger -AtLogOn
-  $triggerRepeat = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 1)
-  $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 5)
-  Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger @($triggerLogon,$triggerRepeat) -Settings $settings -Description "Keep camera local console running." -Force | Out-Null
-  Start-ScheduledTask -TaskName $TaskName
-  Remove-LegacyShortcut
-  Write-Host "Enabled scheduled watchdog: $TaskName"
-}
-
-function Unregister-WatchdogTask {
-  if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
-    Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
-    Write-Host "Disabled scheduled watchdog: $TaskName"
-  } else {
-    Write-Host "Scheduled watchdog was not enabled."
-  }
-  Remove-LegacyShortcut
-}
-
-if ($Enable) {
-  Register-WatchdogTask
-} elseif ($Disable) {
-  Unregister-WatchdogTask
-} else {
-  throw "Use -Enable or -Disable."
-}
-'@ | Set-Content -Path (Join-Path $packageDir "autostart-task.ps1") -Encoding ASCII
 
 @'
 param(
@@ -363,36 +327,164 @@ $ErrorActionPreference = "Stop"
 $InstallRoot = (Resolve-Path -LiteralPath $InstallRoot).Path.TrimEnd("\")
 $portsFile = Join-Path $InstallRoot "config\ports.env"
 $port = "3000"
+$collectorPort = "3100"
 if (Test-Path -LiteralPath $portsFile) {
   foreach ($line in Get-Content -LiteralPath $portsFile) {
     if ($line -match "^\s*PORT\s*=\s*(\d+)\s*$") {
       $port = $Matches[1]
     }
+    if ($line -match "^\s*COLLECTOR_PORT\s*=\s*(\d+)\s*$") {
+      $collectorPort = $Matches[1]
+    }
   }
 }
 
-$healthUrl = "http://127.0.0.1:$port/api/state"
-$healthy = $false
-try {
-  $response = Invoke-WebRequest -Uri $healthUrl -UseBasicParsing -TimeoutSec 5
-  $healthy = $response.StatusCode -ge 200 -and $response.StatusCode -lt 500
-} catch {
-  $healthy = $false
+if ($port -eq $collectorPort) {
+  throw "PORT and COLLECTOR_PORT cannot be the same value: $port"
 }
 
-if ($healthy) {
-  Write-Host "Camera local console is healthy: $healthUrl"
-  exit 0
+function Test-PortFree {
+  param([int]$Port)
+  try {
+    if (Get-Command Get-NetTCPConnection -ErrorAction SilentlyContinue) {
+      $hit = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
+      return -not $hit
+    }
+  } catch {}
+  $line = netstat -ano -p tcp 2>$null | Select-String (":$Port\s+.*LISTENING")
+  return -not $line
 }
 
-$startCmd = Join-Path $InstallRoot "start-all.cmd"
-if (-not (Test-Path -LiteralPath $startCmd)) {
-  throw "start-all.cmd not found: $startCmd"
+foreach ($targetPort in @([int]$port, [int]$collectorPort)) {
+  if (-not (Test-PortFree -Port $targetPort)) {
+    throw "Port $targetPort is already in use. Edit config\ports.env before starting the service."
+  }
 }
 
-Write-Host "Camera local console is not healthy. Starting..."
-Start-Process -FilePath $startCmd -ArgumentList "/minimized /no-browser" -WorkingDirectory $InstallRoot
-'@ | Set-Content -Path (Join-Path $packageDir "watchdog-autostart.ps1") -Encoding ASCII
+$nodeExe = Join-Path $InstallRoot "runtime\node\bin\node.exe"
+if (-not (Test-Path -LiteralPath $nodeExe)) {
+  $nodeExe = Join-Path $InstallRoot "runtime\node\node.exe"
+}
+if (-not (Test-Path -LiteralPath $nodeExe)) {
+  $nodeExe = "node"
+}
+
+$pythonPath = Join-Path $InstallRoot "runtime\python\python.exe"
+if (-not (Test-Path -LiteralPath $pythonPath)) {
+  $pythonPath = "python"
+}
+
+$env:PORT = $port
+$env:COLLECTOR_PORT = $collectorPort
+$env:LOCAL_COLLECTOR_URL = "http://127.0.0.1:$collectorPort"
+$env:GATEWAY_URL = "http://127.0.0.1:$port"
+$env:HIK_SDK_DIR = Join-Path $InstallRoot "sdk\hikvision"
+$env:PYTHON_PATH = $pythonPath
+$env:COLLECTOR_ADAPTER = "hikvision"
+
+$appDir = Join-Path $InstallRoot "app"
+$serverScript = Join-Path $appDir "src\server.js"
+Set-Location -LiteralPath $appDir
+& $nodeExe $serverScript
+exit $LASTEXITCODE
+'@ | Set-Content -Path (Join-Path $packageDir "run-service.ps1") -Encoding ASCII
+
+@'
+<service>
+  <id>CameraLocalConsole</id>
+  <name>Camera Local Console</name>
+  <description>Camera local console and collector manager.</description>
+  <executable>powershell.exe</executable>
+  <arguments>-NoProfile -ExecutionPolicy Bypass -File "%BASE%\run-service.ps1" -InstallRoot "%BASE%"</arguments>
+  <workingdirectory>%BASE%</workingdirectory>
+  <logpath>%BASE%\logs\service</logpath>
+  <log mode="roll-by-size">
+    <sizeThreshold>10485760</sizeThreshold>
+    <keepFiles>5</keepFiles>
+  </log>
+  <startmode>Automatic</startmode>
+  <onfailure action="restart" delay="10 sec"/>
+  <onfailure action="restart" delay="30 sec"/>
+  <onfailure action="restart" delay="60 sec"/>
+  <resetfailure>1 hour</resetfailure>
+</service>
+'@ | Set-Content -Path (Join-Path $packageDir "CameraLocalConsoleService.xml") -Encoding ASCII
+
+@'
+@echo off
+setlocal
+cd /d "%~dp0"
+if not exist "%~dp0CameraLocalConsoleService.exe" (
+  echo.
+  echo CameraLocalConsoleService.exe was not found.
+  echo Please include WinSW-x64.exe as CameraLocalConsoleService.exe when packaging.
+  echo.
+  pause
+  exit /b 1
+)
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$task='CameraLocalConsoleWatchdog'; if (Get-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue) { Unregister-ScheduledTask -TaskName $task -Confirm:$false; Write-Host ('Removed legacy scheduled task: ' + $task) }; $startup=[Environment]::GetFolderPath('Startup'); $shortcut=Join-Path $startup 'camera-local-console.lnk'; if (Test-Path -LiteralPath $shortcut) { Remove-Item -LiteralPath $shortcut -Force; Write-Host ('Removed legacy startup shortcut: ' + $shortcut) }"
+"%~dp0CameraLocalConsoleService.exe" install
+if errorlevel 1 (
+  echo.
+  echo Service install failed. Please run this file as Administrator.
+  echo.
+  pause
+  exit /b 1
+)
+"%~dp0CameraLocalConsoleService.exe" start
+if errorlevel 1 (
+  echo.
+  echo Service was installed, but start failed. Please check logs\service.
+  echo.
+  pause
+  exit /b 1
+)
+echo.
+echo Service installed and started.
+echo Console URL uses PORT in config\ports.env. Default: http://127.0.0.1:3000
+echo.
+pause
+'@ | Set-Content -Path (Join-Path $packageDir "install-service.cmd") -Encoding ASCII
+
+@'
+@echo off
+setlocal
+cd /d "%~dp0"
+if not exist "%~dp0CameraLocalConsoleService.exe" (
+  echo CameraLocalConsoleService.exe was not found.
+  pause
+  exit /b 1
+)
+"%~dp0CameraLocalConsoleService.exe" start
+pause
+'@ | Set-Content -Path (Join-Path $packageDir "start-service.cmd") -Encoding ASCII
+
+@'
+@echo off
+setlocal
+cd /d "%~dp0"
+if not exist "%~dp0CameraLocalConsoleService.exe" (
+  echo CameraLocalConsoleService.exe was not found.
+  pause
+  exit /b 1
+)
+"%~dp0CameraLocalConsoleService.exe" stop
+pause
+'@ | Set-Content -Path (Join-Path $packageDir "stop-service.cmd") -Encoding ASCII
+
+@'
+@echo off
+setlocal
+cd /d "%~dp0"
+if not exist "%~dp0CameraLocalConsoleService.exe" (
+  echo CameraLocalConsoleService.exe was not found.
+  pause
+  exit /b 1
+)
+"%~dp0CameraLocalConsoleService.exe" stop
+"%~dp0CameraLocalConsoleService.exe" uninstall
+pause
+'@ | Set-Content -Path (Join-Path $packageDir "uninstall-service.cmd") -Encoding ASCII
 
 @"
 camera-local-console Windows package
@@ -411,12 +503,15 @@ Update:
   update.cmd
 
 Auto start:
+  install-service.cmd
+  start-service.cmd
+  stop-service.cmd
+  uninstall-service.cmd
   enable-autostart.cmd
   disable-autostart.cmd
-  autostart-task.ps1
-  watchdog-autostart.ps1
-  Enable creates a Windows Scheduled Task named CameraLocalConsoleWatchdog.
-  The task runs on logon and every 1 minute. If the console is not healthy, it starts start-all.cmd.
+  install-service.cmd installs and starts the Windows Service named CameraLocalConsole.
+  The service starts automatically when Windows boots and restarts itself after unexpected exits.
+  enable-autostart.cmd and disable-autostart.cmd are compatibility aliases.
 
 Ports:
   Default console:   http://127.0.0.1:3000

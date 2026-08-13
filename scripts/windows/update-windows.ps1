@@ -154,8 +154,39 @@ function Stop-ProcessByPid {
   }
 }
 
+function Get-ServiceWrapperPath {
+  param([string]$InstallRoot)
+  $serviceExe = Join-Path $InstallRoot "CameraLocalConsoleService.exe"
+  if (Test-Path -LiteralPath $serviceExe) {
+    return $serviceExe
+  }
+  return ""
+}
+
+function Test-CameraServiceInstalled {
+  param([string]$InstallRoot)
+  $serviceExe = Get-ServiceWrapperPath -InstallRoot $InstallRoot
+  if (-not $serviceExe) {
+    return $false
+  }
+  return [bool](Get-Service -Name "CameraLocalConsole" -ErrorAction SilentlyContinue)
+}
+
+function Stop-CameraService {
+  param([string]$InstallRoot)
+  if (-not (Test-CameraServiceInstalled -InstallRoot $InstallRoot)) {
+    return $false
+  }
+  $serviceExe = Get-ServiceWrapperPath -InstallRoot $InstallRoot
+  Write-Host "Stopping Windows service: CameraLocalConsole"
+  & $serviceExe stop 2>$null | Out-Null
+  Start-Sleep -Seconds 2
+  return $true
+}
+
 function Stop-CameraConsole {
   param([string]$InstallRoot)
+  Stop-CameraService -InstallRoot $InstallRoot | Out-Null
   $ports = Read-ConfiguredPorts -InstallRoot $InstallRoot
   $targetPorts = @([int]$ports.PORT, [int]$ports.COLLECTOR_PORT) | Select-Object -Unique
   foreach ($targetPort in $targetPorts) {
@@ -200,25 +231,19 @@ function Copy-UpdateContent {
   }
 }
 
-function Sync-AutostartTask {
+function Sync-WindowsService {
   param([string]$InstallRoot)
   $InstallRoot = (Resolve-Path -LiteralPath $InstallRoot).Path.TrimEnd("\")
-  $task = "CameraLocalConsoleWatchdog"
-  if (-not (Get-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue)) {
-    Write-Host "Scheduled watchdog is not enabled; skip task sync."
+  $serviceExe = Get-ServiceWrapperPath -InstallRoot $InstallRoot
+  if (-not $serviceExe) {
+    Write-Host "Windows service wrapper was not found; skip service sync."
     return
   }
-  $script = Join-Path $InstallRoot "watchdog-autostart.ps1"
-  if (-not (Test-Path -LiteralPath $script)) {
-    Write-Host "watchdog-autostart.ps1 was not found; skip task sync."
+  if (-not (Get-Service -Name "CameraLocalConsole" -ErrorAction SilentlyContinue)) {
+    Write-Host "Windows service is not installed; skip service sync."
     return
   }
-  $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$script`" -InstallRoot `"$InstallRoot`""
-  $triggerLogon = New-ScheduledTaskTrigger -AtLogOn
-  $triggerRepeat = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 1)
-  $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 5)
-  Register-ScheduledTask -TaskName $task -Action $action -Trigger @($triggerLogon,$triggerRepeat) -Settings $settings -Description "Keep camera local console running." -Force | Out-Null
-  Write-Host "Scheduled watchdog synced: $task"
+  Write-Host "Windows service is installed: CameraLocalConsole"
 }
 
 function Restore-Backup {
@@ -248,6 +273,12 @@ function Start-CameraConsole {
     [string]$InstallRoot,
     [string]$RestartMode
   )
+  if (Test-CameraServiceInstalled -InstallRoot $InstallRoot) {
+    $serviceExe = Get-ServiceWrapperPath -InstallRoot $InstallRoot
+    Write-Host "Starting Windows service: CameraLocalConsole"
+    & $serviceExe start 2>$null | Out-Null
+    return
+  }
   $startCmd = Join-Path $InstallRoot "start-all.cmd"
   if (-not (Test-Path -LiteralPath $startCmd)) {
     throw "start-all.cmd was not found."
@@ -403,7 +434,7 @@ try {
 
   Write-Host "Update completed. Backup: $backupPath"
   Write-ProgressEvent -Stage "restart" -Percent 0 -Message "Restarting console..."
-  Sync-AutostartTask -InstallRoot $installRoot
+  Sync-WindowsService -InstallRoot $installRoot
   if ($RestartMode -eq "None") {
     Write-Host "Restart skipped."
     Write-UpdateState -StatePath $statePath -State @{

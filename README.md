@@ -22,9 +22,9 @@
 
 1. 打开下载页，下载 Windows 安装包。
 2. 解压到固定目录，例如 `D:\camera-local-console`。
-3. 双击 `start-all.cmd`。
-4. 程序会打开一个运行窗口，并自动打开本地控制台页面。
-5. 控制台地址是 `http://127.0.0.1:3000`。
+3. 首次调试可以双击 `start-all.cmd`。
+4. 确认功能正常后，右键以管理员身份运行 `install-service.cmd`。
+5. 服务安装后会立即启动，控制台地址是 `http://127.0.0.1:3000`。
 
 如果只想启动服务、不打开浏览器，可以运行：
 
@@ -52,30 +52,47 @@ start-all.cmd /no-browser
 
 ## 自启动与自恢复
 
-部署完成后，双击：
+部署完成后，右键以管理员身份运行：
+
+```bat
+install-service.cmd
+```
+
+这会安装并启动 Windows 服务：
+
+```text
+CameraLocalConsole
+```
+
+服务行为：
+
+```text
+Windows 开机后自动启动
+如果控制台进程意外退出，服务会自动重启
+后台运行，不会每分钟弹出命令窗口
+```
+
+手动维护命令：
+
+```bat
+start-service.cmd
+stop-service.cmd
+uninstall-service.cmd
+```
+
+兼容旧操作：
 
 ```bat
 enable-autostart.cmd
+disable-autostart.cmd
 ```
 
-这会注册 Windows 计划任务：
+`enable-autostart.cmd` 会转到 `install-service.cmd`，`disable-autostart.cmd` 会转到 `uninstall-service.cmd`。
 
-```text
-CameraLocalConsoleWatchdog
-```
-
-任务行为：
-
-```text
-Windows 用户登录时自动检查
-每 1 分钟检查一次本地控制台
-如果 3000 不可访问，自动拉起 start-all.cmd /minimized /no-browser
-```
-
-取消自启动与自恢复：
+取消自启动与自恢复时，右键以管理员身份运行：
 
 ```bat
-disable-autostart.cmd
+uninstall-service.cmd
 ```
 
 ## 在线更新
@@ -106,6 +123,18 @@ config/
 powershell -ExecutionPolicy Bypass -File scripts/windows/package-windows.ps1 -Version 0.1.1
 ```
 
+如果需要把 Windows 服务能力打进安装包，需要提供 WinSW：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/windows/package-windows.ps1 -Version 0.1.1 -WinSWExe D:\tools\WinSW-x64.exe
+```
+
+也可以提前放到：
+
+```text
+vendor\winsw\WinSW-x64.exe
+```
+
 只生成目录、不生成 zip：
 
 ```powershell
@@ -130,6 +159,10 @@ logs/
 start-all.cmd
 stop-all.cmd
 open-console.cmd
+install-service.cmd
+start-service.cmd
+stop-service.cmd
+uninstall-service.cmd
 enable-autostart.cmd
 disable-autostart.cmd
 update.cmd
