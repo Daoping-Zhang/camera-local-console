@@ -360,7 +360,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$InstallRoot = (Resolve-Path -LiteralPath $InstallRoot).Path
+$InstallRoot = (Resolve-Path -LiteralPath $InstallRoot).Path.TrimEnd("\")
 $portsFile = Join-Path $InstallRoot "config\ports.env"
 $port = "3000"
 if (Test-Path -LiteralPath $portsFile) {

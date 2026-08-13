@@ -202,6 +202,7 @@ function Copy-UpdateContent {
 
 function Sync-AutostartTask {
   param([string]$InstallRoot)
+  $InstallRoot = (Resolve-Path -LiteralPath $InstallRoot).Path.TrimEnd("\")
   $task = "CameraLocalConsoleWatchdog"
   if (-not (Get-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue)) {
     Write-Host "Scheduled watchdog is not enabled; skip task sync."
@@ -290,7 +291,7 @@ function Wait-ConsoleHealthy {
   return $false
 }
 
-$installRoot = Resolve-Path $PSScriptRoot
+$installRoot = (Resolve-Path -LiteralPath $PSScriptRoot).Path.TrimEnd("\")
 $versionFile = Join-Path $installRoot "version.json"
 $current = Read-JsonFile -Path $versionFile
 $currentVersion = if ($current -and $current.version) { [string]$current.version } else { "0.0.0" }

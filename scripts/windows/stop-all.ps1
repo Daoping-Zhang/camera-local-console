@@ -3,6 +3,7 @@ param(
 )
 
 $ErrorActionPreference = "SilentlyContinue"
+$InstallRoot = (Resolve-Path -LiteralPath $InstallRoot).Path.TrimEnd("\")
 
 function Read-ConfiguredPorts {
   param([string]$Root)

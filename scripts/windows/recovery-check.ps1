@@ -3,6 +3,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$InstallRoot = (Resolve-Path -LiteralPath $InstallRoot).Path.TrimEnd("\")
 
 function Copy-UpdateContent {
   param(
