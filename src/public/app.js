@@ -534,7 +534,7 @@ function uniqueSavedDevices(devices) {
   const seen = new Set();
   const output = [];
   for (const device of devices || []) {
-    const key = normalizeDeviceIndexCode(device.deviceIndexCode || device.macAddress || device.deviceKey || device.ipAddress);
+    const key = normalizeDeviceIndexCode(device.macAddress || device.deviceIndexCode || device.deviceKey) || `invalid-${device.localId || device.ipAddress || output.length}`;
     if (!key || seen.has(key)) continue;
     seen.add(key);
     output.push(device);
@@ -543,7 +543,7 @@ function uniqueSavedDevices(devices) {
 }
 
 function renderSavedCameraRow(device) {
-  const key = normalizeDeviceIndexCode(device.deviceIndexCode || device.macAddress || device.deviceKey || device.ipAddress);
+  const key = normalizeDeviceIndexCode(device.macAddress || device.deviceIndexCode || device.deviceKey);
   const collectorStatus = savedCameraCollectorStatus(device);
   const latestEvent = latestEvents.find((entry) => normalizeDeviceIndexCode(entry.deviceIndexCode || entry.event?.macAddress || entry.event?.deviceKey || entry.event?.ipAddress) === key);
   const webUrl = defaultCameraWebUrl(device);
@@ -563,13 +563,14 @@ function renderSavedCameraRow(device) {
     </div>
     <div class="camera-actions">
       <button class="secondary" data-saved-action="open" data-web-url="${escapeHtml(webUrl)}">打开</button>
-      <button data-saved-action="register" data-device-key="${escapeHtml(key)}">下发</button>
+      <button data-saved-action="register" data-device-key="${escapeHtml(key)}" ${device.invalidConfig ? "disabled" : ""}>下发</button>
       <button class="secondary" data-saved-action="delete" data-device-key="${escapeHtml(key)}" data-mac="${escapeHtml(device.macAddress || "")}">删除</button>
     </div>
   </div>`;
 }
 
 function savedCameraCollectorStatus(device) {
+  if (device.invalidConfig) return { label: "配置异常", className: "error", detail: device.invalidConfig };
   const keys = deviceMatchKeys(device);
   for (const collector of collectors) {
     for (const item of collector.devices || []) {

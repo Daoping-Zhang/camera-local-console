@@ -450,14 +450,16 @@ function dedupeDeviceRecords(devices) {
   const seen = new Set();
   const output = [];
   for (const device of Array.isArray(devices) ? devices : []) {
-    const key = deviceUniqueKey(device);
+    const macAddress = normalizeMacAddress(device.macAddress || device.deviceIndexCode || device.deviceKey || device.deviceId);
+    const key = macAddress || deviceUniqueKey(device);
     if (!key || seen.has(key)) continue;
     seen.add(key);
     output.push({
       ...device,
-      macAddress: normalizeMacAddress(device.macAddress || device.deviceIndexCode || device.deviceKey || device.deviceId) || device.macAddress,
-      deviceKey: normalizeMacAddress(device.macAddress || device.deviceIndexCode || device.deviceKey || device.deviceId) || device.deviceKey,
-      deviceIndexCode: normalizeMacAddress(device.macAddress || device.deviceIndexCode || device.deviceKey || device.deviceId) || device.deviceIndexCode
+      macAddress: macAddress || device.macAddress,
+      deviceKey: macAddress || device.deviceKey,
+      deviceIndexCode: macAddress || device.deviceIndexCode,
+      invalidConfig: macAddress ? "" : "缺少有效 MAC，不能自动下发到本地采集器"
     });
   }
   return output;
@@ -475,6 +477,23 @@ function normalizeMacAddress(value) {
 }
 
 function buildCollectorSnapshot() {
+  const devices = [];
+  const skipped = [];
+  for (const device of dedupeDeviceRecords(state.devices)) {
+    try {
+      devices.push(buildCollectorDeviceConfig(device));
+    } catch (error) {
+      skipped.push({
+        deviceName: device.deviceName || "",
+        ipAddress: device.ipAddress || "",
+        macAddress: device.macAddress || "",
+        reason: "missing-valid-mac"
+      });
+    }
+  }
+  if (skipped.length) {
+    logger.warn("collector snapshot skipped invalid devices", { count: skipped.length, devices: skipped.slice(0, 10) });
+  }
   return {
     gatewayUrl: `http://${HOST}:${PORT}`,
     collector: {
@@ -486,7 +505,8 @@ function buildCollectorSnapshot() {
       sdkPort: Number(state.cameraDefaults?.sdkPort || 8000),
       savePassword: Boolean(state.cameraDefaults?.savePassword)
     },
-    devices: dedupeDeviceRecords(state.devices).map(buildCollectorDeviceConfig)
+    devices,
+    skippedDevices: skipped
   };
 }
 
