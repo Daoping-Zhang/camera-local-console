@@ -186,7 +186,7 @@ function Copy-UpdateContent {
     [string]$TargetRoot
   )
 
-  $preserve = @("config", "data", "logs", "runtime")
+  $preserve = @("config", "data", "logs", ".update")
   Get-ChildItem -LiteralPath $SourceRoot -Force | ForEach-Object {
     if ($preserve -contains $_.Name) {
       Write-Host "Preserving local directory: $($_.Name)"
@@ -335,8 +335,10 @@ try {
     exit 0
   }
 
-  Remove-Item -LiteralPath $workDir -Recurse -Force -ErrorAction SilentlyContinue
   New-Item -ItemType Directory -Force -Path $workDir | Out-Null
+  Remove-Item -LiteralPath $downloadPath -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $extractPath -Recurse -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $statePath -Force -ErrorAction SilentlyContinue
 
   Write-Host "Downloading: $($manifest.url)"
   Download-FileWithProgress -Url $manifest.url -OutFile $downloadPath

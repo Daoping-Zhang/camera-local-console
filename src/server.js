@@ -51,6 +51,7 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, HOST, () => {
   logger.info("local console started", { host: HOST, port: PORT });
+  cleanupCompletedUpdateWorkDir().catch((error) => logger.warn("update work dir cleanup failed", { error: error.message }));
   ensureManagedCollector().catch((error) => logger.warn("managed collector bootstrap failed", { error: error.message }));
   scheduleConfiguredCollectorRefresh({ force: true });
 });
@@ -1014,9 +1015,10 @@ function startLocalUpdate(manifestUrl, channel) {
   if (!fs.existsSync(scriptPath)) {
     throw new Error("未找到更新进度 runner，无法执行本机更新。");
   }
+  const updaterNode = prepareUpdaterRuntime(installRoot);
   const runnerPort = Number(process.env.UPDATE_RUNNER_PORT || 3219);
   const progressUrl = `http://127.0.0.1:${runnerPort}/`;
-  const child = spawn(process.execPath, [scriptPath], {
+  const child = spawn(updaterNode, [scriptPath], {
     cwd: installRoot,
     env: {
       ...process.env,
@@ -1039,6 +1041,34 @@ function startLocalUpdate(manifestUrl, channel) {
     progressUrl,
     message: "已进入更新进度页。更新过程会停止当前控制台，页面短暂断开属于正常现象。"
   };
+}
+
+function prepareUpdaterRuntime(installRoot) {
+  const updateRoot = path.join(installRoot, ".update");
+  const updaterRuntimeDir = path.join(updateRoot, "updater-runtime");
+  fs.mkdirSync(updaterRuntimeDir, { recursive: true });
+  const sourceNode = process.execPath;
+  const targetNode = path.join(updaterRuntimeDir, path.basename(sourceNode));
+  fs.copyFileSync(sourceNode, targetNode);
+  logger.info("updater runtime prepared", { sourceNode, targetNode });
+  return targetNode;
+}
+
+async function cleanupCompletedUpdateWorkDir() {
+  const installRoot = resolveInstallRoot();
+  const updateRoot = path.join(installRoot, ".update");
+  const statePath = path.join(updateRoot, "update-state.json");
+  if (!fs.existsSync(updateRoot) || !fs.existsSync(statePath)) return;
+  let updateState = null;
+  try {
+    updateState = JSON.parse(fs.readFileSync(statePath, "utf8"));
+  } catch {
+    return;
+  }
+  if (updateState?.status !== "done") return;
+  await new Promise((resolve) => setTimeout(resolve, 10_000));
+  fs.rmSync(updateRoot, { recursive: true, force: true });
+  logger.info("completed update work dir cleaned", { updateRoot });
 }
 
 function resolveInstallRoot() {
