@@ -466,38 +466,53 @@ Start-Process -FilePath $startCmd -ArgumentList "/no-browser" -WorkingDirectory 
 '@ | Set-Content -Path (Join-Path $packageDir "watchdog-autostart.ps1") -Encoding ASCII
 
 @"
-camera-local-console Windows package
+摄像头本地控制台 Windows 安装包
 
-Start:
-  start-all.cmd
-  start-all.cmd /no-browser
-  start-all.cmd /console
-  start-all.cmd /console /minimized /no-browser
+一、启动
+  双击 start-all.cmd
+  默认后台启动，不显示终端窗口，会先打开“正在启动本地控制台”等待页。
 
-Open console:
+  不打开浏览器：
+    start-all.cmd /no-browser
+
+  调试时显示终端：
+    start-all.cmd /console
+
+  调试时显示终端但最小化：
+    start-all.cmd /console /minimized /no-browser
+
+二、打开控制台
   open-console.cmd
-  open-starting-page.ps1
 
-Stop:
+  默认地址：
+    http://127.0.0.1:3000
+
+三、停止
   stop-all.cmd
 
-Update:
+四、更新
   update.cmd
 
-Auto start:
+  推荐在 3000 控制台的“版本更新”页面里执行在线更新。
+
+五、自启动和自恢复
   enable-autostart.cmd
   disable-autostart.cmd
-  autostart-task.ps1
-  watchdog-autostart.ps1
-  Enable creates a Windows Scheduled Task named CameraLocalConsoleWatchdog.
-  The task runs on logon and every 1 minute. If the console is not healthy, it starts start-all.cmd in background.
 
-Ports:
-  Default console:   http://127.0.0.1:3000
-  Default collector: http://127.0.0.1:3100
-  If a port is already in use, edit config\ports.env and run start-all.cmd again.
+  启用后会创建 Windows 计划任务：
+    CameraLocalConsoleWatchdog
 
-SDK path:
+  计划任务会在用户登录时运行，并且每 1 分钟检查一次。
+  如果本地控制台不可访问，会自动后台拉起 start-all.cmd。
+
+六、端口
+  本地控制台：http://127.0.0.1:3000
+  本地采集器：http://127.0.0.1:3100
+
+  如果端口被占用，请修改：
+    config\ports.env
+
+七、海康 SDK 目录
   sdk\hikvision
 "@ | Set-Content -Path (Join-Path $packageDir "README-WINDOWS.txt") -Encoding UTF8
 
