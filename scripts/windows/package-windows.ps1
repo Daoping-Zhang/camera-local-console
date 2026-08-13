@@ -138,6 +138,7 @@ COLLECTOR_PORT=3100
 '@ | Set-Content -Path (Join-Path $configDir "ports.env") -Encoding ASCII
 Copy-Item -LiteralPath (Join-Path $projectRoot "scripts\windows\update-windows.ps1") -Destination (Join-Path $packageDir "update-windows.ps1") -Force
 Copy-Item -LiteralPath (Join-Path $projectRoot "scripts\windows\recovery-check.ps1") -Destination (Join-Path $packageDir "recovery-check.ps1") -Force
+Copy-Item -LiteralPath (Join-Path $projectRoot "scripts\windows\stop-all.ps1") -Destination (Join-Path $packageDir "stop-all.ps1") -Force
 @{
   version = $Version
   channel = $Channel
@@ -271,9 +272,9 @@ pause
 
 @'
 @echo off
-taskkill /FI "WINDOWTITLE eq camera-console*" /T /F >nul 2>nul
-taskkill /FI "WINDOWTITLE eq camera-collector-3100*" /T /F >nul 2>nul
-echo stopped
+setlocal
+cd /d "%~dp0"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0stop-all.ps1" -InstallRoot "%~dp0"
 pause
 '@ | Set-Content -Path (Join-Path $packageDir "stop-all.cmd") -Encoding ASCII
 
