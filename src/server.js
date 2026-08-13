@@ -130,6 +130,9 @@ async function handleApi(req, res) {
     await refreshCollectorSnapshot(collectorUrl, result).catch((error) => {
       logger.warn("collector snapshot refresh failed after register", { error: error.message });
     });
+    await applyCollectorSnapshot(collectorUrl).catch((error) => {
+      logger.warn("collector snapshot apply failed after register", { error: error.message });
+    });
     sendJson(res, 200, { ok: true, result });
     return;
   }

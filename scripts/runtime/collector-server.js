@@ -15,6 +15,7 @@ const devices = new Map();
 const workers = new Map();
 const deviceFingerprints = new Map();
 const retryState = new Map();
+const workerGenerations = new Map();
 const logs = [];
 let lastHeartbeatAt = "";
 let lastEventAt = "";
@@ -51,12 +52,11 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "POST" && url.pathname === "/api/devices/register") {
       const body = await readJson(req);
       gatewayUrl = (body.gatewayUrl || gatewayUrl).replace(/\/+$/, "");
-      const device = await connectCamera(normalizeDevice(body));
+      const device = normalizeDevice(body);
       devices.set(device.deviceKey, device);
-      deviceFingerprints.set(device.deviceKey, deviceFingerprint(device));
       await sendHeartbeat();
       writeLog("info", "device registered", { deviceKey: device.deviceKey, ipAddress: device.ipAddress, role: device.role });
-      sendJson(res, 200, { ok: true, collectorId, deviceKey: device.deviceKey, status: "registered", connectionStatus: device.connectionStatus, device });
+      sendJson(res, 200, { ok: true, collectorId, deviceKey: device.deviceKey, status: "registered", connectionStatus: "pending", device });
       return;
     }
     if (req.method === "POST" && url.pathname === "/api/devices/delete") {
@@ -352,7 +352,9 @@ function startHikvisionWorker(device) {
     throw new Error("camera sdk username and password are required");
   }
 
-  stopWorker(device.deviceKey);
+  stopWorker(device.deviceKey, { reason: "restart" });
+  const generation = (workerGenerations.get(device.deviceKey) || 0) + 1;
+  workerGenerations.set(device.deviceKey, generation);
 
   const args = [
     path.join(__dirname, "hikvision-collector.py"),
@@ -374,6 +376,9 @@ function startHikvisionWorker(device) {
   });
   const worker = {
     process: child,
+    generation,
+    stopping: false,
+    stopReason: "",
     startedAt: new Date().toISOString(),
     status: "starting",
     lastError: ""
@@ -384,6 +389,7 @@ function startHikvisionWorker(device) {
   child.stderr.on("data", (chunk) => handleWorkerError(device, chunk));
   child.on("error", (error) => {
     const current = workers.get(device.deviceKey);
+    if (current?.process !== child || current.generation !== generation || current.stopping) return;
     if (current?.process === child) {
       current.status = "error";
       current.lastError = error.message;
@@ -397,9 +403,21 @@ function startHikvisionWorker(device) {
   });
   child.on("exit", (code, signal) => {
     const current = workers.get(device.deviceKey);
-    if (current?.process === child) {
+    const isCurrentWorker = current?.process === child && current.generation === generation;
+    const plannedStop = current?.stopping;
+    if (isCurrentWorker) {
       current.status = "stopped";
       current.lastError = code === 0 ? "" : `exit code ${code ?? "null"}, signal ${signal ?? "null"}`;
+    }
+    if (!isCurrentWorker || plannedStop) {
+      writeLog("info", "hikvision worker exited after planned stop", {
+        deviceKey: device.deviceKey,
+        code,
+        signal,
+        generation,
+        reason: current?.stopReason || "superseded"
+      });
+      return;
     }
     const saved = devices.get(device.deviceKey);
     if (saved) {
@@ -422,9 +440,11 @@ function startHikvisionWorker(device) {
   };
 }
 
-function stopWorker(deviceKey) {
+function stopWorker(deviceKey, options = {}) {
   const worker = workers.get(deviceKey);
   if (!worker) return;
+  worker.stopping = true;
+  worker.stopReason = options.reason || "stop";
   worker.process.kill();
   workers.delete(deviceKey);
 }
@@ -441,6 +461,17 @@ function handleWorkerOutput(device, chunk) {
     if (entry.message === "login succeeded" || entry.message === "alarm armed" || entry.message === "heartbeat sent") {
       const worker = workers.get(device.deviceKey);
       if (worker) worker.status = "running";
+      const saved = devices.get(device.deviceKey);
+      if (saved) {
+        devices.set(device.deviceKey, {
+          ...saved,
+          status: "online",
+          connectionStatus: "connected",
+          lastError: "",
+          connectedAt: saved.connectedAt || new Date().toISOString()
+        });
+        sendHeartbeat().catch((error) => writeLog("warn", "heartbeat after worker output failed", { error: error.message }));
+      }
     }
     if (entry.message === "heartbeat sent") continue;
     writeLog(entry.level || "info", entry.message || "hikvision worker output", { deviceKey: device.deviceKey, ...entry });
