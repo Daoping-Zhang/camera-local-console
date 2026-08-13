@@ -139,10 +139,23 @@ function importPackage(body) {
   const extension = safePackageExtension(sourcePath);
   const packageName = `camera-local-console-${platform}-${version}${extension}`;
   const targetPath = path.join(RELEASE_ROOT, "packages", platform, packageName);
+  const registry = readRegistry();
+  const existing = (registry.packages || []).find((item) => item.version === version && item.platform === platform);
+  const publishedChannels = publishedChannelsFor(version, platform);
+  if (existing && publishedChannels.length) {
+    throw new Error(`version ${version} / ${platform} is published to ${publishedChannels.join(", ")}. Revoke it before overwriting.`);
+  }
   fs.mkdirSync(path.dirname(targetPath), { recursive: true });
-  fs.copyFileSync(sourcePath, targetPath);
-
-  const sha256 = fileSha256(targetPath);
+  const tempPath = `${targetPath}.${Date.now()}.tmp`;
+  let sha256 = "";
+  try {
+    fs.copyFileSync(sourcePath, tempPath);
+    sha256 = fileSha256(tempPath);
+    fs.renameSync(tempPath, targetPath);
+  } catch (error) {
+    fs.rmSync(tempPath, { force: true });
+    throw error;
+  }
   const manifest = {
     version,
     channel: "",
@@ -155,11 +168,24 @@ function importPackage(body) {
   const manifestPath = path.join(RELEASE_ROOT, "manifests", `${version}-${platform}.json`);
   writeJson(manifestPath, manifest);
 
-  const registry = readRegistry();
+  const now = new Date().toISOString();
   registry.packages = [
-    { ...manifest, packageName, status: "draft", importedAt: new Date().toISOString() },
+    {
+      ...manifest,
+      packageName,
+      status: existing?.status || "draft",
+      importedAt: existing?.importedAt || now,
+      overwrittenAt: existing ? now : "",
+      previousSha256: existing?.sha256 || ""
+    },
     ...(registry.packages || []).filter((item) => !(item.version === version && item.platform === platform))
   ];
+  if (existing) {
+    registry.channelHistory = [
+      { action: "overwrite", channel: "", version, platform, previousSha256: existing.sha256 || "", sha256, at: now },
+      ...(registry.channelHistory || [])
+    ].slice(0, 200);
+  }
   writeRegistry(registry);
   return manifest;
 }
@@ -245,11 +271,7 @@ function deletePackage(body) {
   const platform = String(body.platform || "win-x64").trim();
   if (!version) throw new Error("version is required");
   if (!PLATFORMS.includes(platform)) throw new Error(`platform must be one of: ${PLATFORMS.join(", ")}`);
-  const channels = Object.fromEntries(CHANNELS.map((channel) => [channel, readChannel(channel)]));
-  const publishedChannels = CHANNELS.filter((channel) => {
-    const manifest = channels[channel];
-    return manifest?.version === version && manifest?.platform === platform;
-  });
+  const publishedChannels = publishedChannelsFor(version, platform);
   if (publishedChannels.length) {
     throw new Error(`package is published to ${publishedChannels.join(", ")}. Revoke it before deleting.`);
   }
@@ -268,6 +290,13 @@ function deletePackage(body) {
   ].slice(0, 200);
   writeRegistry(registry);
   return { version, platform, deleted: true };
+}
+
+function publishedChannelsFor(version, platform) {
+  return CHANNELS.filter((channel) => {
+    const manifest = readChannel(channel);
+    return manifest?.version === version && manifest?.platform === platform;
+  });
 }
 
 function readChannel(channel) {
@@ -797,9 +826,10 @@ function pageHtml() {
       const rows = appState.packages.map((pkg) => {
         const channels = pkg.publishedChannels && pkg.publishedChannels.length ? pkg.publishedChannels.map(channelName).join("，") : "-";
         const canDelete = !pkg.publishedChannels || !pkg.publishedChannels.length;
+        const overwriteText = pkg.overwrittenAt ? '<p class="muted">覆盖于：' + escapeHtml(pkg.overwrittenAt) + '</p>' : '';
         const actions = ["canary","beta","stable"].map(c => '<button onclick="promote(\\'' + c + '\\',\\'' + escapeHtml(pkg.version) + '\\',\\'' + escapeHtml(pkg.platform) + '\\')">发布到 ' + c + '</button>').join(' ') +
           '<button class="secondary" onclick="deletePackage(\\'' + escapeHtml(pkg.version) + '\\',\\'' + escapeHtml(pkg.platform) + '\\')" ' + (canDelete ? '' : 'disabled title="请先从通道撤回"') + '>删除</button>';
-        return '<tr><td><strong>' + escapeHtml(pkg.version) + '</strong><p class="muted">' + escapeHtml(statusName(pkg.status)) + '</p></td><td>' + escapeHtml(pkg.platform) + '</td><td>' + escapeHtml(channels) + '</td><td><code>' + escapeHtml(pkg.sha256) + '</code></td><td>' + escapeHtml(pkg.notes || '暂无说明') + '</td><td><div class="row">' + actions + '</div></td></tr>';
+        return '<tr><td><strong>' + escapeHtml(pkg.version) + '</strong><p class="muted">' + escapeHtml(statusName(pkg.status)) + '</p>' + overwriteText + '</td><td>' + escapeHtml(pkg.platform) + '</td><td>' + escapeHtml(channels) + '</td><td><code>' + escapeHtml(pkg.sha256) + '</code></td><td>' + escapeHtml(pkg.notes || '暂无说明') + '</td><td><div class="row">' + actions + '</div></td></tr>';
       }).join("");
       document.getElementById("packages").innerHTML = '<div class="table-wrap"><table><thead><tr><th>版本</th><th>平台</th><th>当前通道</th><th>SHA256</th><th>更新说明</th><th>操作</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
     }
@@ -809,14 +839,22 @@ function pageHtml() {
     }
     function renderVersionSuggestion() {
       const suggested = appState.suggestedNextVersion || "";
+      const existing = (appState.packages || []).find(pkg => pkg.version === version.value && pkg.platform === platform.value);
       if (!version.value && suggested) version.value = suggested;
       version.placeholder = suggested || "0.1.1";
-      versionHelp.innerHTML = suggested
-        ? '建议下一个版本号：<button class="link-button" onclick="useSuggestedVersion()" type="button">' + escapeHtml(suggested) + '</button>'
-        : '可以手动填写版本号';
+      if (existing && existing.publishedChannels && existing.publishedChannels.length) {
+        versionHelp.innerHTML = '该版本正在发布到 ' + escapeHtml(existing.publishedChannels.map(channelName).join("，")) + '，需要先撤回才能覆盖。';
+      } else if (existing) {
+        versionHelp.innerHTML = '同版本同平台已存在，上传会覆盖该安装包内容。';
+      } else {
+        versionHelp.innerHTML = suggested
+          ? '建议下一个版本号：<button class="link-button" onclick="useSuggestedVersion()" type="button">' + escapeHtml(suggested) + '</button>'
+          : '可以手动填写版本号';
+      }
     }
     function useSuggestedVersion() {
       version.value = appState.suggestedNextVersion || version.placeholder;
+      renderVersionSuggestion();
     }
     async function importPackage() {
       await api("/packages/import", { sourcePath: sourcePath.value, version: version.value, platform: platform.value, notes: notes.value });
@@ -910,6 +948,8 @@ function pageHtml() {
       document.getElementById("status").textContent = e.message;
       alert(e.message);
     });
+    version.addEventListener("input", renderVersionSuggestion);
+    platform.addEventListener("change", renderVersionSuggestion);
   </script>
 </body>
 </html>`;
