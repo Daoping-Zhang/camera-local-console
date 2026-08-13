@@ -124,11 +124,18 @@ function appendLog(line) {
       percent = Number.isFinite(Number(progress.percent)) ? Number(progress.percent) : percent;
       if (stage === "rollback") status = "rollback";
       message = localizedProgressMessage({ status, stage, percent, rawMessage: progress.message });
-      logs.push({ time: progress.time || new Date().toISOString(), line: progress.message || item });
+      logs.push({ time: progress.time || new Date().toISOString(), line: sanitizeLogLine(progress.message || item) });
       continue;
     }
-    logs.push({ time: new Date().toISOString(), line: item });
+    logs.push({ time: new Date().toISOString(), line: sanitizeLogLine(item) });
   }
+}
+
+function sanitizeLogLine(line) {
+  const text = String(line || "");
+  if (!text) return "";
+  if (/[\u4e00-\u9fff\ufffd]/.test(text)) return "Localized system output hidden; see the main status above.";
+  return text.replace(/[^\x09\x0a\x0d\x20-\x7e]/g, "?");
 }
 
 function localizedProgressMessage(progress) {

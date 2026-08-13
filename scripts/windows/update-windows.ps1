@@ -85,10 +85,89 @@ function Download-FileWithProgress {
   Write-ProgressEvent -Stage "download" -Percent 100 -Message "Package download completed"
 }
 
+function Expand-ZipPackage {
+  param(
+    [string]$ZipPath,
+    [string]$DestinationPath
+  )
+  try {
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    if (Test-Path -LiteralPath $DestinationPath) {
+      Remove-Item -LiteralPath $DestinationPath -Recurse -Force
+    }
+    New-Item -ItemType Directory -Force -Path $DestinationPath | Out-Null
+    [System.IO.Compression.ZipFile]::ExtractToDirectory($ZipPath, $DestinationPath)
+  } catch {
+    throw "Package extraction failed. Please confirm the downloaded file is a valid zip archive."
+  }
+}
+
+function Read-ConfiguredPorts {
+  param([string]$InstallRoot)
+  $ports = @{
+    PORT = "3000"
+    COLLECTOR_PORT = "3100"
+  }
+  $portsFile = Join-Path $InstallRoot "config\ports.env"
+  if (Test-Path -LiteralPath $portsFile) {
+    foreach ($line in Get-Content -LiteralPath $portsFile) {
+      if ($line -match "^\s*(PORT|COLLECTOR_PORT)\s*=\s*(\d+)\s*$") {
+        $ports[$Matches[1].ToUpperInvariant()] = $Matches[2]
+      }
+    }
+  }
+  return $ports
+}
+
+function Get-ListeningPids {
+  param([int]$Port)
+  $pids = @()
+  try {
+    if (Get-Command Get-NetTCPConnection -ErrorAction SilentlyContinue) {
+      $pids += Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue |
+        Select-Object -ExpandProperty OwningProcess -ErrorAction SilentlyContinue
+    }
+  } catch {}
+  if (-not $pids -or $pids.Count -eq 0) {
+    try {
+      $lines = netstat -ano -p tcp 2>$null | Select-String (":$Port\s+.*LISTENING\s+(\d+)")
+      foreach ($line in $lines) {
+        if ($line.Line -match "\s+(\d+)\s*$") {
+          $pids += [int]$Matches[1]
+        }
+      }
+    } catch {}
+  }
+  return @($pids | Where-Object { $_ -and $_ -ne $PID } | Select-Object -Unique)
+}
+
+function Stop-ProcessTreeByPid {
+  param([int]$ProcessId)
+  try {
+    & taskkill.exe /PID $ProcessId /T /F 2>$null | Out-Null
+  } catch {
+    try {
+      Stop-Process -Id $ProcessId -Force -ErrorAction SilentlyContinue
+    } catch {}
+  }
+}
+
 function Stop-CameraConsole {
-  taskkill /FI "WINDOWTITLE eq camera-console*" /T /F | Out-Null
-  taskkill /FI "WINDOWTITLE eq camera-console-3000*" /T /F | Out-Null
-  taskkill /FI "WINDOWTITLE eq camera-collector-3100*" /T /F | Out-Null
+  param([string]$InstallRoot)
+  $ports = Read-ConfiguredPorts -InstallRoot $InstallRoot
+  $targetPorts = @([int]$ports.PORT, [int]$ports.COLLECTOR_PORT) | Select-Object -Unique
+  foreach ($targetPort in $targetPorts) {
+    foreach ($processId in Get-ListeningPids -Port $targetPort) {
+      Write-Host "Stopping process on port $targetPort: $processId"
+      Stop-ProcessTreeByPid -ProcessId $processId
+    }
+  }
+  foreach ($title in @("camera-console*", "camera-console-3000*", "camera-collector-3100*")) {
+    try {
+      & taskkill.exe /FI "WINDOWTITLE eq $title" /T /F 2>$null | Out-Null
+    } catch {}
+  }
+  Start-Sleep -Seconds 2
 }
 
 function Copy-UpdateContent {
@@ -143,7 +222,7 @@ function Restore-Backup {
     throw "Backup path does not exist: $BackupPath"
   }
   Write-ProgressEvent -Stage "rollback" -Percent 0 -Message "Rolling back to previous version..."
-  Stop-CameraConsole
+  Stop-CameraConsole -InstallRoot $InstallRoot
   Copy-UpdateContent -SourceRoot $BackupPath -TargetRoot $InstallRoot
   if ($StatePath) {
     Write-UpdateState -StatePath $StatePath -State @{
@@ -262,7 +341,7 @@ try {
   }
 
   Write-ProgressEvent -Stage "extract" -Percent 0 -Message "Extracting package..."
-  Expand-Archive -LiteralPath $downloadPath -DestinationPath $extractPath -Force
+  Expand-ZipPackage -ZipPath $downloadPath -DestinationPath $extractPath
   Write-ProgressEvent -Stage "extract" -Percent 100 -Message "Package extracted"
   $packageRoot = Get-ChildItem -LiteralPath $extractPath -Directory | Select-Object -First 1
   if (-not $packageRoot) {
@@ -271,7 +350,7 @@ try {
 
   Write-Host "Stopping running services..."
   Write-ProgressEvent -Stage "stop" -Percent 0 -Message "Stopping previous version..."
-  Stop-CameraConsole
+  Stop-CameraConsole -InstallRoot $installRoot
   Write-ProgressEvent -Stage "stop" -Percent 100 -Message "Previous version stopped"
 
   Write-Host "Creating backup: $backupPath"
