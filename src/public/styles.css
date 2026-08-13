@@ -1090,6 +1090,28 @@ a {
   justify-content: flex-end;
 }
 
+.release-options {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.release-card {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px;
+  background: #fff;
+}
+
+.release-card h3 {
+  margin: 8px 0 4px;
+  font-size: 16px;
+}
+
 .empty-state {
   color: var(--muted);
   text-align: center;

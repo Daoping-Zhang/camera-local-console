@@ -921,17 +921,81 @@ async function checkRelease(manifestUrl) {
   const current = releaseState();
   const url = String(manifestUrl || current.manifestUrl || "").trim();
   if (!url) throw new Error("manifestUrl is required");
-  const response = await fetch(url, { headers: { "Accept": "application/json" } });
-  if (!response.ok) throw new Error(`manifest request failed with ${response.status}`);
-  const manifest = await response.json();
-  const latestVersion = String(manifest.version || "");
+  const channels = await checkReleaseChannels(url, current);
+  const selected = channels.find((item) => item.channel === current.channel) || channels.find((item) => item.manifestUrl === url) || channels[0];
+  const manifest = selected?.manifest || null;
+  const latestVersion = String(manifest?.version || "");
   return {
     currentVersion: current.version,
     latestVersion,
-    updateAvailable: Boolean(latestVersion && latestVersion !== current.version),
+    updateAvailable: Boolean(selected?.updateAvailable),
     manifestUrl: url,
-    manifest
+    manifest,
+    channels
   };
+}
+
+async function checkReleaseChannels(manifestUrl, current) {
+  const urls = new Map();
+  urls.set(current.channel || "stable", manifestUrl);
+  for (const channel of ["stable", "beta", "canary"]) {
+    urls.set(channel, siblingManifestUrl(manifestUrl, channel) || defaultManifestUrl(channel));
+  }
+  const checks = await Promise.all(Array.from(urls.entries()).map(async ([channel, url]) => {
+    try {
+      const response = await fetch(url, { headers: { "Accept": "application/json" } });
+      if (!response.ok) throw new Error(`manifest request failed with ${response.status}`);
+      const manifest = await response.json();
+      const latestVersion = String(manifest.version || "");
+      const manifestChannel = String(manifest.channel || channel || "");
+      return {
+        ok: true,
+        channel: manifestChannel,
+        label: releaseChannelLabel(manifestChannel),
+        manifestUrl: url,
+        currentVersion: current.version,
+        latestVersion,
+        updateAvailable: Boolean(latestVersion && latestVersion !== current.version),
+        manifest
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        channel,
+        label: releaseChannelLabel(channel),
+        manifestUrl: url,
+        currentVersion: current.version,
+        latestVersion: "",
+        updateAvailable: false,
+        error: error.message
+      };
+    }
+  }));
+  const seen = new Set();
+  return checks.filter((item) => {
+    const key = item.channel || item.manifestUrl;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function siblingManifestUrl(manifestUrl, channel) {
+  try {
+    const url = new URL(manifestUrl);
+    url.pathname = url.pathname.replace(/\/channels\/[^/]+\.json$/, `/channels/${channel}.json`);
+    return url.toString();
+  } catch {
+    return "";
+  }
+}
+
+function releaseChannelLabel(channel) {
+  return {
+    stable: "稳定版",
+    beta: "测试版",
+    canary: "灰度版"
+  }[channel] || channel || "自定义";
 }
 
 function startLocalUpdate(manifestUrl, channel) {

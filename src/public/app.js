@@ -310,14 +310,22 @@ function renderRelease(release) {
   setValue("releaseManifestUrl", release.manifestUrl || "");
   const result = release.lastCheckResult;
   renderReleaseDownload(null, release.manifestUrl);
+  renderReleaseOptions([]);
   if (!result) {
     setText("releaseState", release.lastCheckAt ? `上次检查：${formatTime(release.lastCheckAt)}` : "尚未检查");
     setText("releaseManifest", "");
     return;
   }
-  const status = result.updateAvailable ? `发现新版本：${result.currentVersion} -> ${result.latestVersion}` : "已是最新版本";
+  const availableCount = (result.channels || []).filter((item) => item.updateAvailable).length;
+  const failedCount = (result.channels || []).filter((item) => item.ok === false).length;
+  const status = availableCount
+    ? `发现 ${availableCount} 个可更新版本`
+    : failedCount
+      ? `未发现可用更新，${failedCount} 个通道检查失败`
+      : "已是最新版本";
   setText("releaseState", `${status}；上次检查：${formatTime(release.lastCheckAt)}`);
-  setText("releaseManifest", JSON.stringify(result.manifest || result, null, 2));
+  setText("releaseManifest", "");
+  renderReleaseOptions(result.channels || []);
   renderReleaseDownload(result, result.manifestUrl || release.manifestUrl);
 }
 
@@ -347,6 +355,38 @@ function renderReleaseDownload(result, manifestUrl) {
   `;
 }
 
+function renderReleaseOptions(channels) {
+  const container = $("releaseOptions");
+  if (!container) return;
+  if (!channels.length) {
+    container.innerHTML = "";
+    return;
+  }
+  container.innerHTML = channels.map((item) => {
+    const manifest = item.manifest || {};
+    const notes = manifest.notes || item.error || "暂无更新说明";
+    const status = item.ok === false
+      ? "检查失败"
+      : item.updateAvailable
+        ? `可更新：${item.currentVersion || "-"} -> ${item.latestVersion || "-"}`
+        : `已是最新：${item.currentVersion || "-"}`
+    const badgeClass = item.ok === false ? "error" : item.updateAvailable ? "online" : "muted";
+    return `<div class="release-card">
+      <div>
+        <span class="status-badge ${badgeClass}">${escapeHtml(status)}</span>
+        <h3>${escapeHtml(item.label || item.channel || "版本")}</h3>
+        <p class="hint">${escapeHtml(notes)}</p>
+        <p class="hint">${escapeHtml(item.manifestUrl || "")}</p>
+      </div>
+      <div class="release-actions">
+        ${item.updateAvailable ? `<button class="apply-release" type="button" data-manifest-url="${escapeHtml(item.manifestUrl || "")}" data-channel="${escapeHtml(item.channel || "")}">更新到此版本</button>` : ""}
+        ${manifest.url ? `<a class="button-link" href="${escapeHtml(manifest.url)}" target="_blank" rel="noopener">下载安装包</a>` : ""}
+        ${item.manifestUrl ? `<a class="button-link" href="${escapeHtml(item.manifestUrl)}" target="_blank" rel="noopener">查看清单</a>` : ""}
+      </div>
+    </div>`;
+  }).join("");
+}
+
 async function copyReleaseUrl(url) {
   if (!url) return;
   try {
@@ -369,6 +409,8 @@ async function saveReleaseConfig() {
 }
 
 async function checkRelease() {
+  setText("releaseState", "正在检查更新...");
+  renderReleaseOptions([]);
   const data = await api("/api/release/check", {
     method: "POST",
     body: JSON.stringify({ manifestUrl: $("releaseManifestUrl")?.value })
@@ -376,13 +418,13 @@ async function checkRelease() {
   renderRelease(data.release || {});
 }
 
-async function applyReleaseUpdate(manifestUrl) {
+async function applyReleaseUpdate(manifestUrl, channel) {
   if (!confirm("将开始本机更新。更新过程可能会停止当前控制台，页面短暂断开属于正常现象。继续吗？")) return;
   const data = await api("/api/release/apply", {
     method: "POST",
     body: JSON.stringify({
       manifestUrl: manifestUrl || $("releaseManifestUrl")?.value,
-      channel: $("releaseChannel")?.value
+      channel: channel || $("releaseChannel")?.value
     })
   });
   setText("releaseState", data.result?.message || "已启动本机更新");
@@ -1155,7 +1197,7 @@ function bindHandlers() {
     const copyButton = event.target.closest(".copy-release-url");
     if (copyButton) copyReleaseUrl(copyButton.dataset.url);
     const applyButton = event.target.closest(".apply-release");
-    if (applyButton) applyReleaseUpdate(applyButton.dataset.manifestUrl).catch(showError);
+    if (applyButton) applyReleaseUpdate(applyButton.dataset.manifestUrl, applyButton.dataset.channel).catch(showError);
   });
 }
 
