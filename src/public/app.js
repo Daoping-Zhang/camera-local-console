@@ -98,8 +98,8 @@ async function refresh() {
   renderShopSelect();
   renderInterfaces(data.interfaces || []);
   renderScanResults(scanResults);
-  renderSavedCameras();
   renderCollectors(data.collectors || []);
+  renderSavedCameras();
   renderEvents(latestEvents);
   renderEvents(latestEvents, "overviewEvents", 5);
   renderRelease(state.release || {});

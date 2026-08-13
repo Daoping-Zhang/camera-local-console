@@ -188,6 +188,7 @@ if not exist "%NODE_EXE%" set "NODE_EXE=node"
 set "PYTHON_PATH=%~dp0runtime\python\python.exe"
 if not exist "%PYTHON_PATH%" set "PYTHON_PATH=python"
 
+set "GATEWAY_URL=http://127.0.0.1:3000"
 set "HIK_SDK_DIR=%~dp0sdk\hikvision"
 set "COLLECTOR_ADAPTER=hikvision"
 

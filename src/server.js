@@ -15,11 +15,15 @@ const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || "127.0.0.1";
 
 let state = loadState();
+state.devices = dedupeDeviceRecords(state.devices);
 if (process.env.LEGACY_HIK_BASE_URL) {
   state.server.legacyHikBaseUrl = process.env.LEGACY_HIK_BASE_URL;
 }
 const recentEvents = [];
 const collectors = new Map();
+let collectorRefreshPromise = null;
+let lastCollectorRefreshAt = 0;
+const COLLECTOR_REFRESH_INTERVAL_MS = 5_000;
 const debugShops = [
   { id: "10001", name: "本地调试门店 A" },
   { id: "10002", name: "本地调试门店 B" }
@@ -40,12 +44,14 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, HOST, () => {
   logger.info("local console started", { host: HOST, port: PORT });
+  scheduleConfiguredCollectorRefresh({ force: true });
 });
 
 async function handleApi(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
   if (req.method === "GET" && url.pathname === "/api/state") {
-    sendJson(res, 200, { ok: true, state: publicState(), interfaces: listInterfaces(), events: recentEvents });
+    scheduleConfiguredCollectorRefresh();
+    sendJson(res, 200, { ok: true, state: publicState(), collectors: listCollectors(), interfaces: listInterfaces(), events: recentEvents });
     return;
   }
   if (req.method === "GET" && url.pathname === "/api/logs") {
@@ -192,8 +198,9 @@ async function handleApi(req, res) {
     const body = await readJson(req);
     const record = buildDeviceRecord(body);
     const remote = bindLocalDevice(record);
+    state.devices = state.devices.filter((item) => deviceIndexCode(item) !== deviceIndexCode(record));
     state.devices.unshift({ ...record, localId: `${Date.now()}`, remote });
-    state.devices = state.devices.slice(0, 50);
+    state.devices = dedupeDeviceRecords(state.devices).slice(0, 50);
     saveState(state);
     logger.info("device bound", { shopId: record.shopId, macAddress: record.macAddress, type: record.type });
     sendJson(res, 200, { ok: true, record, remote, state: publicState() });
@@ -290,7 +297,7 @@ async function registerDeviceFlow(body) {
   state.localCollector = { ...(state.localCollector || {}), baseUrl: collectorUrl };
   state.devices = state.devices.filter((item) => deviceIndexCode(item) !== deviceIndexCode(record));
   state.devices.unshift({ ...record, localId: `${Date.now()}`, remote, collector });
-  state.devices = state.devices.slice(0, 50);
+  state.devices = dedupeDeviceRecords(state.devices).slice(0, 50);
   saveState(state);
   steps[steps.length - 1] = { name: "local-device-record", status: "success", result: remote };
 
@@ -300,6 +307,70 @@ async function registerDeviceFlow(body) {
     shopId: record.shopId
   });
   return { steps, record, collector, remote };
+}
+
+function scheduleConfiguredCollectorRefresh(options = {}) {
+  const collectorUrl = state.localCollector?.baseUrl;
+  if (!collectorUrl || state.localCollector?.autoConnect === false) return collectorRefreshPromise;
+  const now = Date.now();
+  if (!options.force && now - lastCollectorRefreshAt < COLLECTOR_REFRESH_INTERVAL_MS) return collectorRefreshPromise;
+  if (collectorRefreshPromise) return collectorRefreshPromise;
+  lastCollectorRefreshAt = now;
+  collectorRefreshPromise = refreshConfiguredCollector(collectorUrl)
+    .catch((error) => {
+      logger.warn("configured collector refresh failed", { collectorUrl, error: error.message });
+    })
+    .finally(() => {
+      collectorRefreshPromise = null;
+    });
+  return collectorRefreshPromise;
+}
+
+async function refreshConfiguredCollector(collectorUrl) {
+  await refreshCollectorSnapshot(collectorUrl);
+  await restoreSavedDevicesToCollector(collectorUrl);
+}
+
+async function restoreSavedDevicesToCollector(collectorUrl) {
+  const savedDevices = Array.isArray(state.devices) ? state.devices : [];
+  if (!savedDevices.length) return;
+  const remoteDevices = listCollectorDevices();
+  let restored = false;
+  for (const device of savedDevices) {
+    if (!device.password && !device.sdk?.password) continue;
+    const key = deviceIndexCode(device);
+    if (!key || remoteDevices.some((item) => deviceIndexCode(item) === key)) continue;
+    try {
+      const collector = await collectorPost(collectorUrl, "/api/devices/register", buildCollectorDeviceConfig(device));
+      device.collector = collector;
+      restored = true;
+      logger.info("saved device restored to collector", { collectorUrl, deviceKey: key });
+    } catch (error) {
+      logger.warn("saved device restore failed", { collectorUrl, deviceKey: key, error: error.message });
+    }
+  }
+  if (restored) {
+    saveState(state);
+    await refreshCollectorSnapshot(collectorUrl).catch((error) => {
+      logger.warn("collector snapshot refresh failed after restore", { error: error.message });
+    });
+  }
+}
+
+function listCollectorDevices() {
+  return Array.from(collectors.values()).flatMap((collector) => collector.devices || []);
+}
+
+function dedupeDeviceRecords(devices) {
+  const seen = new Set();
+  const output = [];
+  for (const device of Array.isArray(devices) ? devices : []) {
+    const key = deviceIndexCode(device);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    output.push(device);
+  }
+  return output;
 }
 
 function buildDeviceRecord(body) {
@@ -670,6 +741,7 @@ function listCollectors() {
 function publicState() {
   return {
     ...state,
+    devices: dedupeDeviceRecords(state.devices),
     release: releaseState(),
     server: {
       legacyHikBaseUrl: state.server.legacyHikBaseUrl || "",
