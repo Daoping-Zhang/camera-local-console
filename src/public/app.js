@@ -596,6 +596,7 @@ function renderSavedCameraRow(device) {
     <div class="camera-main">
       <strong>${escapeHtml(device.deviceName || device.ipAddress || device.macAddress || key || "未命名摄像头")}</strong>
       <span>${escapeHtml(device.ipAddress || "-")} · ${escapeHtml(device.macAddress || device.deviceKey || "-")}</span>
+      <code class="camera-index">index: ${escapeHtml(key || "-")}</code>
     </div>
     <div>
       <span class="status-badge ${collectorStatus.className}">${escapeHtml(collectorStatus.label)}</span>

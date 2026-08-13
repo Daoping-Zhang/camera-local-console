@@ -449,6 +449,18 @@ a {
   overflow-wrap: anywhere;
 }
 
+.camera-index {
+  width: fit-content;
+  max-width: 100%;
+  padding: 2px 6px;
+  border: 1px solid #d9dee7;
+  border-radius: 4px;
+  background: #f8fafc;
+  color: #475467;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
 .camera-actions {
   grid-template-columns: repeat(3, auto);
 }
