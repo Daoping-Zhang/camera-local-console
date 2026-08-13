@@ -137,6 +137,7 @@ PORT=3000
 COLLECTOR_PORT=3100
 '@ | Set-Content -Path (Join-Path $configDir "ports.env") -Encoding ASCII
 Copy-Item -LiteralPath (Join-Path $projectRoot "scripts\windows\update-windows.ps1") -Destination (Join-Path $packageDir "update-windows.ps1") -Force
+Copy-Item -LiteralPath (Join-Path $projectRoot "scripts\windows\recovery-check.ps1") -Destination (Join-Path $packageDir "recovery-check.ps1") -Force
 @{
   version = $Version
   channel = $Channel
@@ -193,6 +194,14 @@ for %%A in (%*) do (
 )
 
 set "APP_DIR=%~dp0app"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0recovery-check.ps1"
+if errorlevel 1 (
+  echo.
+  echo Startup recovery failed. Please check the update state manually.
+  echo.
+  pause
+  exit /b 1
+)
 set "PORT=3000"
 set "COLLECTOR_PORT=3100"
 if exist "%~dp0config\ports.env" (

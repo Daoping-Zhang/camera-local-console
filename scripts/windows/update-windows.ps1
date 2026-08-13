@@ -31,6 +31,17 @@ function Write-ProgressEvent {
   } | ConvertTo-Json -Compress | ForEach-Object { Write-Host "UPDATE_PROGRESS $_" }
 }
 
+function Write-UpdateState {
+  param(
+    [string]$StatePath,
+    [hashtable]$State
+  )
+  $dir = Split-Path -Parent $StatePath
+  New-Item -ItemType Directory -Force -Path $dir | Out-Null
+  $State.updatedAt = (Get-Date).ToString("s")
+  $State | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $StatePath -Encoding UTF8
+}
+
 function Download-FileWithProgress {
   param(
     [string]$Url,
@@ -122,7 +133,8 @@ function Sync-AutostartShortcut {
 function Restore-Backup {
   param(
     [string]$BackupPath,
-    [string]$InstallRoot
+    [string]$InstallRoot,
+    [string]$StatePath = ""
   )
   if (-not (Test-Path -LiteralPath $BackupPath)) {
     throw "Backup path does not exist: $BackupPath"
@@ -130,6 +142,13 @@ function Restore-Backup {
   Write-ProgressEvent -Stage "rollback" -Percent 0 -Message "正在回滚到旧版本..."
   Stop-CameraConsole
   Copy-UpdateContent -SourceRoot $BackupPath -TargetRoot $InstallRoot
+  if ($StatePath) {
+    Write-UpdateState -StatePath $StatePath -State @{
+      status = "rolled-back"
+      backupPath = $BackupPath
+      reason = "update failure"
+    }
+  }
   Write-ProgressEvent -Stage "rollback" -Percent 100 -Message "已回滚到旧版本"
 }
 
@@ -213,6 +232,7 @@ if ($CheckOnly) {
 }
 
 $workDir = Join-Path $installRoot ".update"
+$statePath = Join-Path $workDir "update-state.json"
 $downloadPath = Join-Path $workDir "package.zip"
 $extractPath = Join-Path $workDir "package"
 $backupPath = Join-Path $installRoot (".backup-" + (Get-Date -Format "yyyyMMddHHmmss"))
@@ -256,12 +276,26 @@ foreach ($item in Get-ChildItem -LiteralPath $installRoot -Force) {
   Copy-Item -LiteralPath $item.FullName -Destination $backupPath -Recurse -Force
 }
 Write-ProgressEvent -Stage "backup" -Percent 100 -Message "旧版本备份完成"
+Write-UpdateState -StatePath $statePath -State @{
+  status = "applying"
+  backupPath = $backupPath
+  targetVersion = $latestVersion
+  previousVersion = $currentVersion
+  manifestUrl = $ManifestUrl
+}
 
 try {
   Write-Host "Applying update..."
   Write-ProgressEvent -Stage "apply" -Percent 0 -Message "正在覆盖新版文件..."
   Copy-UpdateContent -SourceRoot $packageRoot.FullName -TargetRoot $installRoot
   Write-ProgressEvent -Stage "apply" -Percent 100 -Message "新版文件覆盖完成"
+  Write-UpdateState -StatePath $statePath -State @{
+    status = "restarting"
+    backupPath = $backupPath
+    targetVersion = $latestVersion
+    previousVersion = $currentVersion
+    manifestUrl = $ManifestUrl
+  }
 
   @{
     version = $latestVersion
@@ -275,6 +309,13 @@ try {
   Sync-AutostartShortcut -InstallRoot $installRoot
   if ($RestartMode -eq "None") {
     Write-Host "Restart skipped."
+    Write-UpdateState -StatePath $statePath -State @{
+      status = "done"
+      backupPath = $backupPath
+      targetVersion = $latestVersion
+      previousVersion = $currentVersion
+      manifestUrl = $ManifestUrl
+    }
     Write-ProgressEvent -Stage "done" -Percent 100 -Message "更新完成，未自动重启"
   } else {
     Write-Host "Restarting camera console..."
@@ -283,13 +324,20 @@ try {
     if (-not (Wait-ConsoleHealthy -InstallRoot $installRoot -TimeoutSeconds 60)) {
       throw "新版控制台 60 秒内没有恢复，准备自动回滚。"
     }
+    Write-UpdateState -StatePath $statePath -State @{
+      status = "done"
+      backupPath = $backupPath
+      targetVersion = $latestVersion
+      previousVersion = $currentVersion
+      manifestUrl = $ManifestUrl
+    }
     Write-ProgressEvent -Stage "done" -Percent 100 -Message "更新完成，控制台已重启"
   }
 } catch {
   $errorMessage = $_.Exception.Message
   Write-Host "Update failed after backup: $errorMessage"
   Write-ProgressEvent -Stage "rollback" -Percent 0 -Message "更新失败，正在自动回滚：$errorMessage"
-  Restore-Backup -BackupPath $backupPath -InstallRoot $installRoot
+  Restore-Backup -BackupPath $backupPath -InstallRoot $installRoot -StatePath $statePath
   if ($RestartMode -ne "None") {
     Start-CameraConsole -InstallRoot $installRoot -RestartMode $RestartMode
     if (Wait-ConsoleHealthy -InstallRoot $installRoot -TimeoutSeconds 60) {
