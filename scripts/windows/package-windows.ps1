@@ -248,15 +248,69 @@ if "%NO_BROWSER%"=="0" powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp
 
 if "%START_CONSOLE%"=="1" (
   if "%START_MINIMIZED%"=="1" (
-    start "camera-console" /min cmd /k ""%NODE_EXE%" "%APP_DIR%\src\server.js""
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0start-console.ps1" -InstallRoot "%~dp0" -Console -Minimized
   ) else (
-    start "camera-console" cmd /k ""%NODE_EXE%" "%APP_DIR%\src\server.js""
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0start-console.ps1" -InstallRoot "%~dp0" -Console
   )
 ) else (
-  powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command "Start-Process -FilePath $env:NODE_EXE -ArgumentList @((Join-Path $env:APP_DIR 'src\server.js')) -WorkingDirectory $env:APP_DIR -WindowStyle Hidden"
+  powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "%~dp0start-console.ps1" -InstallRoot "%~dp0"
 )
 timeout /t 2 /nobreak >nul
 '@ | Set-Content -Path (Join-Path $packageDir "start-all.cmd") -Encoding ASCII
+
+@'
+param(
+  [string]$InstallRoot = $PSScriptRoot,
+  [switch]$Console,
+  [switch]$Minimized
+)
+
+$ErrorActionPreference = "Stop"
+$InstallRoot = (Resolve-Path -LiteralPath $InstallRoot).Path
+$appDir = Join-Path $InstallRoot "app"
+$portsFile = Join-Path $InstallRoot "config\ports.env"
+$port = "3000"
+$collectorPort = "3100"
+if (Test-Path -LiteralPath $portsFile) {
+  foreach ($line in Get-Content -LiteralPath $portsFile) {
+    if ($line -match "^\s*PORT\s*=\s*(\d+)\s*$") {
+      $port = $Matches[1]
+    }
+    if ($line -match "^\s*COLLECTOR_PORT\s*=\s*(\d+)\s*$") {
+      $collectorPort = $Matches[1]
+    }
+  }
+}
+
+$nodeExe = Join-Path $InstallRoot "runtime\node\bin\node.exe"
+if (-not (Test-Path -LiteralPath $nodeExe)) {
+  $nodeExe = Join-Path $InstallRoot "runtime\node\node.exe"
+}
+if (-not (Test-Path -LiteralPath $nodeExe)) {
+  $nodeExe = "node"
+}
+
+$serverScript = Join-Path $appDir "src\server.js"
+if (-not (Test-Path -LiteralPath $serverScript)) {
+  throw "server.js not found: $serverScript"
+}
+
+$env:PORT = $port
+$env:COLLECTOR_PORT = $collectorPort
+$env:LOCAL_COLLECTOR_URL = "http://127.0.0.1:$collectorPort"
+$env:GATEWAY_URL = "http://127.0.0.1:$port"
+$env:HIK_SDK_DIR = Join-Path $InstallRoot "sdk\hikvision"
+$pythonPath = Join-Path $InstallRoot "runtime\python\python.exe"
+$env:PYTHON_PATH = if (Test-Path -LiteralPath $pythonPath) { $pythonPath } else { "python" }
+$env:COLLECTOR_ADAPTER = "hikvision"
+
+if ($Console) {
+  $windowStyle = if ($Minimized) { "Minimized" } else { "Normal" }
+  Start-Process -FilePath "cmd.exe" -ArgumentList @("/k", "`"$nodeExe`" `"$serverScript`"") -WorkingDirectory $appDir -WindowStyle $windowStyle
+} else {
+  Start-Process -FilePath $nodeExe -ArgumentList @($serverScript) -WorkingDirectory $appDir -WindowStyle Hidden
+}
+'@ | Set-Content -Path (Join-Path $packageDir "start-console.ps1") -Encoding ASCII
 
 @'
 @echo off
@@ -480,6 +534,9 @@ Start-Process -FilePath $startCmd -ArgumentList "/no-browser" -WorkingDirectory 
 
   调试时显示终端但最小化：
     start-all.cmd /console /minimized /no-browser
+
+  内部启动脚本：
+    start-console.ps1
 
 二、打开控制台
   open-console.cmd

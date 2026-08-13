@@ -128,6 +128,7 @@ config/
 data/
 logs/
 start-all.cmd
+start-console.ps1
 stop-all.cmd
 open-console.cmd
 open-starting-page.ps1
