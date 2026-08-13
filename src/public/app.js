@@ -5,6 +5,7 @@ let shops = [];
 let collectors = [];
 let latestEvents = [];
 let scanResults = [];
+let lastErrorText = "";
 
 function setText(id, value) {
   const element = $(id);
@@ -58,14 +59,15 @@ function formatRelative(value) {
   if (!value) return "-";
   const delta = Date.now() - new Date(value).getTime();
   if (Number.isNaN(delta)) return "-";
-  if (delta < 60000) return "just now";
-  if (delta < 3600000) return `${Math.floor(delta / 60000)} min ago`;
-  return `${Math.floor(delta / 3600000)} h ago`;
+  if (delta < 60000) return "刚刚";
+  if (delta < 3600000) return `${Math.floor(delta / 60000)} 分钟前`;
+  return `${Math.floor(delta / 3600000)} 小时前`;
 }
 
 function showError(error) {
   console.error(error);
-  alert(error.message || String(error));
+  lastErrorText = error.message || String(error);
+  renderLastError(lastErrorText);
 }
 
 function showPage(pageClass) {
@@ -95,18 +97,23 @@ async function refresh() {
   renderModeBadge();
   renderShopSelect();
   renderInterfaces(data.interfaces || []);
-  renderScanResults(scanResults.length ? scanResults : state.devices || []);
+  renderScanResults(scanResults);
+  renderSavedCameras();
   renderCollectors(data.collectors || []);
   renderEvents(latestEvents);
+  renderEvents(latestEvents, "overviewEvents", 5);
   renderRelease(state.release || {});
   renderMetrics();
+  renderSetupChecklist();
+  renderConfigSummary();
+  renderLastError(lastErrorText);
 }
 
 function renderModeBadge() {
   const configured = Boolean(state?.server?.legacyHikBaseUrl);
   const element = $("modeBadge");
   if (!element) return;
-  element.textContent = configured ? "hik-contact-data" : "not configured";
+  element.textContent = configured ? "数据服务已配置" : "数据服务未配置";
   element.className = `status-badge ${configured ? "online" : "muted"}`;
 }
 
@@ -117,11 +124,184 @@ function renderMetrics() {
   const staleCount = collectors.filter((collector) => collector.status === "stale").length;
   const lastEvent = latestEvents[0];
   const lastEventMac = lastEvent?.event?.macAddress || lastEvent?.payload?.EventNotificationAlert?.macAddress || "-";
-  setText("gatewayMetric", state.server.legacyHikBaseUrl || "not configured");
-  setText("shopMetric", state.shop.shopId ? `${state.shop.shopName || "Shop"} #${state.shop.shopId}` : "not selected");
-  setText("deviceMetric", `${state.devices?.length || 0} registered`);
-  setText("collectorMetric", `${collectors.length} total - ${onlineCount} online - ${reachableCount} reachable - ${staleCount} stale`);
-  setText("eventMetric", lastEvent ? `${formatRelative(lastEvent.time)} - ${lastEventMac}` : "none");
+  const savedDeviceCount = uniqueSavedDevices(state.devices || []).length;
+  setText("gatewayMetric", state.server.legacyHikBaseUrl ? "已配置" : "未配置");
+  setText("deviceMetric", `${savedDeviceCount} 台已保存`);
+  setText("collectorMetric", `${collectors.length} 个，${onlineCount} 在线，${reachableCount} 可访问，${staleCount} 过期`);
+  setText("eventMetric", lastEvent ? `${formatRelative(lastEvent.time)} - ${lastEventMac}` : "暂无");
+}
+
+function setupItems() {
+  const latestEvent = latestEvents[0];
+  const hasBackend = Boolean(state?.server?.legacyHikBaseUrl);
+  const onlineCollectors = collectors.filter((collector) => collector.status === "online");
+  const reachableCollectors = collectors.filter((collector) => collector.status === "reachable");
+  const registeredDevices = uniqueSavedDevices(state?.devices || []).length;
+  const hasEvent = Boolean(latestEvent);
+  const lastWriteOk = latestEvent?.legacy?.enabled ? Boolean(latestEvent.legacy.ok) : false;
+  return [
+    {
+      key: "backend",
+      label: "hik 数据服务",
+      status: hasBackend ? "ready" : "todo",
+      title: hasBackend ? "数据服务已配置" : "数据服务未配置",
+      detail: hasBackend ? "客流和人体事件会写入该服务。" : "先填写 hik 数据服务地址，再测试两个写入接口。",
+      actionLabel: hasBackend ? "重新测试" : "去配置",
+      action: hasBackend ? connectLegacyHik : () => showPage("page-uplink")
+    },
+    {
+      key: "collector",
+      label: "本地采集器",
+      status: onlineCollectors.length ? "ready" : reachableCollectors.length ? "warn" : "todo",
+      title: onlineCollectors.length ? "采集器在线" : reachableCollectors.length ? "端口可访问，等待心跳" : "未发现在线采集器",
+      detail: onlineCollectors.length
+        ? `${onlineCollectors.length} 个采集器已回传心跳`
+        : reachableCollectors.length
+          ? "采集器端口已通，但还没有完成初始化或回传心跳。"
+          : "请先启动本地采集器，再点击测试。",
+      actionLabel: "测试采集器",
+      action: testCollector
+    },
+    {
+      key: "device",
+      label: "摄像头",
+      status: registeredDevices ? "ready" : "todo",
+      title: registeredDevices ? `已保存 ${registeredDevices} 台` : "还没有保存摄像头",
+      detail: registeredDevices ? "来自 data/config.json，不代表当前都在线。" : "扫描网段，填写账号密码后注册到本地采集器。",
+      actionLabel: registeredDevices ? "查看列表" : "扫描添加",
+      action: registeredDevices ? focusSavedCameraList : focusScanInput
+    },
+    {
+      key: "event",
+      label: "事件写入",
+      status: lastWriteOk ? "ready" : hasEvent ? "warn" : "todo",
+      title: lastWriteOk ? "最近事件已写入后端" : hasEvent ? "收到事件，但后端写入未成功" : "还没有收到事件",
+      detail: lastWriteOk
+        ? `${formatRelative(latestEvent.time)} 写入 ${latestEvent.legacy.path}`
+        : hasEvent
+          ? eventFailureAdvice(latestEvent)
+          : "注册摄像头后等待真实事件，或发送一条测试客流事件。",
+      actionLabel: "发送测试事件",
+      action: testEvent
+    }
+  ];
+}
+
+function focusScanInput() {
+  showPage("page-cameras");
+  $("scanSection")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  $("cidr")?.focus();
+}
+
+function focusSavedCameraList() {
+  showPage("page-cameras");
+  $("savedCameras")?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function renderSetupChecklist() {
+  const container = $("setupChecklist");
+  if (!container || !state) return;
+  const items = setupItems();
+  container.innerHTML = items.map((item) => `<div class="setup-item ${escapeHtml(item.status)}">
+    <span class="setup-dot"></span>
+    <div>
+      <small>${escapeHtml(item.label)}</small>
+      <strong>${escapeHtml(item.title)}</strong>
+      <p>${escapeHtml(item.detail)}</p>
+    </div>
+    <button class="secondary" data-setup-action="${escapeHtml(item.key)}">${escapeHtml(item.actionLabel)}</button>
+  </div>`).join("");
+  container.querySelectorAll("[data-setup-action]").forEach((button) => {
+    const item = items.find((entry) => entry.key === button.dataset.setupAction);
+    button.onclick = () => runWithButton(button, item.action).catch(showError);
+  });
+  renderNextAction(items);
+}
+
+function renderNextAction(items) {
+  const container = $("nextAction");
+  if (!container) return;
+  const next = items.find((item) => item.status !== "ready") || items[items.length - 1];
+  container.innerHTML = `<div>
+    <strong>下一步：${escapeHtml(next.title)}</strong>
+    <p>${escapeHtml(next.detail)}</p>
+  </div>
+  <button data-next-action="${escapeHtml(next.key)}">${escapeHtml(next.actionLabel)}</button>`;
+  const button = container.querySelector("[data-next-action]");
+  button.onclick = () => runWithButton(button, next.action).catch(showError);
+}
+
+function renderLastError(message) {
+  const container = $("nextAction");
+  if (!container) return;
+  const existing = container.querySelector(".error-advice");
+  if (existing) existing.remove();
+  if (!message) return;
+  container.insertAdjacentHTML("beforeend", `<div class="error-advice">
+    <strong>刚才的操作失败</strong>
+    <p>${escapeHtml(message)}</p>
+    <p>${escapeHtml(errorAdvice(message))}</p>
+  </div>`);
+}
+
+function errorAdvice(message) {
+  const text = String(message || "").toLowerCase();
+  if (text.includes("fetch") || text.includes("failed")) return "请检查服务地址是否正确、采集器或 hik-contact-data 是否已经启动。";
+  if (text.includes("password") || text.includes("login")) return "请确认摄像头账号密码和 SDK 端口，必要时先打开摄像头登录页验证。";
+  if (text.includes("gatewayurl")) return "请先从控制台完成注册，让采集器知道事件要回传到哪里。";
+  if (text.includes("not found")) return "请确认接口路径和服务版本是否匹配。";
+  return "可以到运行日志页查看更完整的错误上下文。";
+}
+
+function eventFailureAdvice(entry) {
+  const legacy = entry?.legacy || {};
+  if (!legacy.enabled) return "已收到本地事件，但还没有配置 hik-contact-data 地址。";
+  return legacy.error || legacy.response?.data?.message || "事件已到达本地控制台，但写入 hik-contact-data 失败。";
+}
+
+function renderConfigSummary() {
+  if (!state) return;
+  const savedDeviceCount = uniqueSavedDevices(state.devices || []).length;
+  const items = [
+    { label: "配置文件", value: "data/config.json", action: "", actionLabel: "" },
+    { label: "本地采集器", value: state.localCollector?.baseUrl ? "已配置" : "未配置", action: "page-collectors", actionLabel: "去修改" },
+    { label: "hik 数据服务", value: state.server?.legacyHikBaseUrl ? "已配置" : "未配置", action: "page-uplink", actionLabel: "去修改" },
+    { label: "已保存摄像头", value: `${savedDeviceCount} 台`, action: "page-cameras", actionLabel: "查看" },
+    { label: "默认 SDK 端口", value: state.cameraDefaults?.sdkPort || 8000, action: "page-cameras", actionLabel: "去修改" },
+    { label: "保存摄像头密码", value: state.cameraDefaults?.savePassword ? "是" : "否", action: "page-cameras", actionLabel: "去修改" },
+    { label: "版本更新", value: state.release?.manifestUrl ? "已配置" : "未配置", action: "page-release", actionLabel: "去修改" }
+  ];
+  const html = items.map((item) => `<div class="summary-row">
+    <span>${escapeHtml(item.label)}</span>
+    <strong>${escapeHtml(item.value)}</strong>
+    ${item.action ? `<button class="summary-action" data-summary-page="${escapeHtml(item.action)}">${escapeHtml(item.actionLabel)}</button>` : ""}
+  </div>`).join("");
+  const overview = $("configSummary");
+  if (overview) {
+    overview.innerHTML = html;
+    overview.querySelectorAll("[data-summary-page]").forEach((button) => {
+      button.onclick = () => showPage(button.dataset.summaryPage);
+    });
+  }
+}
+
+function collectorUrlValue() {
+  return $("downCollectorUrl")?.value || $("manualCollectorUrl")?.value || "http://127.0.0.1:3100";
+}
+
+async function runWithButton(button, action) {
+  if (!action) return;
+  const original = button.textContent;
+  button.disabled = true;
+  button.textContent = "处理中...";
+  lastErrorText = "";
+  renderLastError("");
+  try {
+    await action();
+  } finally {
+    button.disabled = false;
+    button.textContent = original;
+  }
 }
 
 function renderRelease(release) {
@@ -129,14 +309,52 @@ function renderRelease(release) {
   setValue("releaseChannel", release.channel || "stable");
   setValue("releaseManifestUrl", release.manifestUrl || "");
   const result = release.lastCheckResult;
+  renderReleaseDownload(null, release.manifestUrl);
   if (!result) {
-    setText("releaseState", release.lastCheckAt ? `last check: ${formatTime(release.lastCheckAt)}` : "not checked");
+    setText("releaseState", release.lastCheckAt ? `上次检查：${formatTime(release.lastCheckAt)}` : "尚未检查");
     setText("releaseManifest", "");
     return;
   }
-  const status = result.updateAvailable ? `update available: ${result.currentVersion} -> ${result.latestVersion}` : "already up to date";
-  setText("releaseState", `${status}; last check: ${formatTime(release.lastCheckAt)}`);
+  const status = result.updateAvailable ? `发现新版本：${result.currentVersion} -> ${result.latestVersion}` : "已是最新版本";
+  setText("releaseState", `${status}；上次检查：${formatTime(release.lastCheckAt)}`);
   setText("releaseManifest", JSON.stringify(result.manifest || result, null, 2));
+  renderReleaseDownload(result, result.manifestUrl || release.manifestUrl);
+}
+
+function renderReleaseDownload(result, manifestUrl) {
+  const container = $("releaseDownload");
+  if (!container) return;
+  const manifest = result?.manifest || {};
+  if (!result || !manifest.url) {
+    container.hidden = true;
+    container.innerHTML = "";
+    return;
+  }
+  container.hidden = false;
+  const notes = manifest.notes || "暂无更新说明";
+  container.innerHTML = `
+    <div>
+      <span class="release-label">最新版本</span>
+      <strong>${escapeHtml(result.latestVersion || manifest.version || "-")}</strong>
+      <p class="hint">${escapeHtml(notes)}</p>
+    </div>
+    <div class="release-actions">
+      ${result.updateAvailable ? `<button class="apply-release" type="button" data-manifest-url="${escapeHtml(manifestUrl || "")}">立即更新本机</button>` : ""}
+      <a class="button-link ${result.updateAvailable ? "" : "primary-link"}" href="${escapeHtml(manifest.url)}" target="_blank" rel="noopener">下载安装包</a>
+      <a class="button-link" href="${escapeHtml(manifestUrl || "")}" target="_blank" rel="noopener">查看清单</a>
+      <button class="secondary copy-release-url" type="button" data-url="${escapeHtml(manifest.url)}">复制下载链接</button>
+    </div>
+  `;
+}
+
+async function copyReleaseUrl(url) {
+  if (!url) return;
+  try {
+    await navigator.clipboard.writeText(url);
+    setText("releaseState", "下载链接已复制");
+  } catch {
+    setText("releaseState", url);
+  }
 }
 
 async function saveReleaseConfig() {
@@ -156,6 +374,18 @@ async function checkRelease() {
     body: JSON.stringify({ manifestUrl: $("releaseManifestUrl")?.value })
   });
   renderRelease(data.release || {});
+}
+
+async function applyReleaseUpdate(manifestUrl) {
+  if (!confirm("将开始本机更新。更新过程可能会停止当前控制台，页面短暂断开属于正常现象。继续吗？")) return;
+  const data = await api("/api/release/apply", {
+    method: "POST",
+    body: JSON.stringify({
+      manifestUrl: manifestUrl || $("releaseManifestUrl")?.value,
+      channel: $("releaseChannel")?.value
+    })
+  });
+  setText("releaseState", data.result?.message || "已启动本机更新");
 }
 
 function renderInterfaces(interfaces) {
@@ -208,12 +438,13 @@ async function connectLegacyHik() {
       body: JSON.stringify({ baseUrl: $("legacyHikBaseUrl")?.value })
     });
     const endpoints = data.result?.endpoints || {};
-    const rcv = endpoints.eventRcv?.ok ? "eventRcv OK" : `eventRcv failed: ${endpoints.eventRcv?.message || "-"}`;
-    const rtbw = endpoints.eventRtbw?.ok ? "eventRtbw OK" : `eventRtbw failed: ${endpoints.eventRtbw?.message || "-"}`;
-    setText("legacyHikState", `${data.result?.reachable ? "connected" : "saved but probe failed"}: ${rcv}; ${rtbw}`);
+    const rcv = endpoints.eventRcv?.ok ? "客流接口可用" : `客流接口失败：${endpoints.eventRcv?.message || "-"}`;
+    const rtbw = endpoints.eventRtbw?.ok ? "人体接口可用" : `人体接口失败：${endpoints.eventRtbw?.message || "-"}`;
+    setText("legacyHikState", `${data.result?.reachable ? "数据服务可用" : "已保存，但接口测试失败"}：${rcv}；${rtbw}`);
     await refresh();
   } catch (error) {
-    setText("legacyHikState", `hik-contact-data failed: ${error.message}`);
+    setText("legacyHikState", `数据服务测试失败：${error.message}`);
+    showError(error);
   }
 }
 
@@ -232,30 +463,35 @@ function renderScanResults(devices) {
   container.innerHTML = devices.map((device) => {
     const deviceIndexCode = normalizeDeviceIndexCode(device.deviceIndexCode || device.macAddress || device.deviceKey || device.ipAddress);
     const bound = device.bound
-      ? `<span class="status-badge online">registered</span>`
-      : `<span class="status-badge muted">new</span>`;
+      ? `<span class="status-badge online">已注册</span>`
+      : `<span class="status-badge reachable">新发现</span>`;
     return `<div class="device-card" data-device-index-code="${escapeHtml(deviceIndexCode)}">
       <div class="device-title"><strong>${escapeHtml(device.ipAddress)}</strong>${bound}</div>
       <p>MAC: ${escapeHtml(device.macAddress || "-")}</p>
       <p>deviceIndexCode: ${escapeHtml(deviceIndexCode || "-")}</p>
       <p>${escapeHtml(device.hostname || device.vendor || "")}</p>
       <div class="inline-form">
-        <input placeholder="Device ID" value="${escapeHtml(device.deviceId || deviceIndexCode || "")}" data-field="deviceId">
-        <input placeholder="Device Name" value="${escapeHtml(device.deviceName || device.hostname || "")}" data-field="deviceName">
-        <input placeholder="Username" value="${escapeHtml(device.username || savedDeviceConfig(device)?.username || $("cameraUsername")?.value || "admin")}" data-field="username" autocomplete="off">
-        <input placeholder="Password" type="password" value="${escapeHtml(device.password || $("cameraPassword")?.value || "")}" data-field="password" autocomplete="off">
-        <input placeholder="SDK Port" type="number" value="${escapeHtml(device.sdkPort || savedDeviceConfig(device)?.sdkPort || $("sdkPort")?.value || $("collectorDefaultSdkPort")?.value || 8000)}" data-field="sdkPort">
+        <input aria-label="设备 ID" placeholder="设备 ID" value="${escapeHtml(device.deviceId || deviceIndexCode || "")}" data-field="deviceId">
+        <input aria-label="设备名称" placeholder="设备名称" value="${escapeHtml(device.deviceName || device.hostname || "")}" data-field="deviceName">
+        <input aria-label="SDK 账号" placeholder="SDK 账号" value="${escapeHtml(device.username || savedDeviceConfig(device)?.username || $("cameraUsername")?.value || "admin")}" data-field="username" autocomplete="off">
+        <input aria-label="SDK 密码" placeholder="SDK 密码" type="password" value="${escapeHtml(device.password || $("cameraPassword")?.value || "")}" data-field="password" autocomplete="off">
+        <input aria-label="SDK 端口" placeholder="SDK 端口" type="number" value="${escapeHtml(device.sdkPort || savedDeviceConfig(device)?.sdkPort || $("sdkPort")?.value || $("collectorDefaultSdkPort")?.value || 8000)}" data-field="sdkPort">
         <select data-field="type">
-          <option value="0" ${Number(device.type || 0) === 0 ? "selected" : ""}>outside</option>
-          <option value="1" ${Number(device.type || 0) === 1 ? "selected" : ""}>inside</option>
+          <option value="0" ${Number(device.type || 0) === 0 ? "selected" : ""}>入口/外侧</option>
+          <option value="1" ${Number(device.type || 0) === 1 ? "selected" : ""}>出口/内侧</option>
         </select>
-        <button data-action="open-login" data-web-url="${escapeHtml(device.webUrl || defaultCameraWebUrl(device))}">open login</button>
-        <button data-action="register" data-ip="${escapeHtml(device.ipAddress)}" data-mac="${escapeHtml(device.macAddress || "")}" data-device-index-code="${escapeHtml(deviceIndexCode)}">bind and register</button>
-        <button data-action="delete" data-ip="${escapeHtml(device.ipAddress)}" data-mac="${escapeHtml(device.macAddress || "")}" data-device-index-code="${escapeHtml(deviceIndexCode)}">delete</button>
+        <button data-action="open-login" data-web-url="${escapeHtml(device.webUrl || defaultCameraWebUrl(device))}">打开登录页</button>
+        <button data-action="register" data-ip="${escapeHtml(device.ipAddress)}" data-mac="${escapeHtml(device.macAddress || "")}" data-device-index-code="${escapeHtml(deviceIndexCode)}">注册到采集器</button>
+        <button class="secondary" data-action="delete" data-ip="${escapeHtml(device.ipAddress)}" data-mac="${escapeHtml(device.macAddress || "")}" data-device-index-code="${escapeHtml(deviceIndexCode)}">删除</button>
+      </div>
+      <div class="flow-steps">
+        <div class="flow-step"><span class="status-badge muted">1</span>保存到 data/config.json</div>
+        <div class="flow-step"><span class="status-badge muted">2</span>下发到本地采集器</div>
+        <div class="flow-step"><span class="status-badge muted">3</span>等待 SDK 登录和心跳</div>
       </div>
       <p class="hint" data-role="scan-status">${escapeHtml(device.lastError || device.statusText || "")}</p>
     </div>`;
-  }).join("") || `<div class="empty-state">No devices</div>`;
+  }).join("") || `<div class="empty-state">暂无扫描结果。点击“开始扫描”后，发现的摄像头会显示在这里。</div>`;
   document.querySelectorAll(".device-card button").forEach((button) => {
     button.onclick = () => {
       if (button.dataset.action === "open-login") {
@@ -273,6 +509,95 @@ function renderScanResults(devices) {
     input.oninput = () => persistScanCardInput(input);
     input.onchange = () => persistScanCardInput(input);
   });
+}
+
+function renderSavedCameras() {
+  const summary = $("savedCameraSummary");
+  const container = $("savedCameras");
+  if (!container || !state) return;
+  const allDevices = state.devices || [];
+  const devices = uniqueSavedDevices(allDevices);
+  const duplicateCount = Math.max(0, allDevices.length - devices.length);
+  if (summary) {
+    summary.innerHTML = `<div>
+      <strong>${devices.length} 台</strong>
+      <span>已保存到 data/config.json，重启后会自动读取。${duplicateCount ? `已合并 ${duplicateCount} 条重复历史记录。` : ""}</span>
+    </div>`;
+  }
+  container.innerHTML = devices.map(renderSavedCameraRow).join("") || `<div class="empty-state">暂无已保存摄像头。可以先扫描网段并注册。</div>`;
+  container.querySelectorAll("[data-saved-action]").forEach((button) => {
+    button.onclick = () => runWithButton(button, () => handleSavedCameraAction(button)).catch(showError);
+  });
+}
+
+function uniqueSavedDevices(devices) {
+  const seen = new Set();
+  const output = [];
+  for (const device of devices || []) {
+    const key = normalizeDeviceIndexCode(device.deviceIndexCode || device.macAddress || device.deviceKey || device.ipAddress);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    output.push(device);
+  }
+  return output;
+}
+
+function renderSavedCameraRow(device) {
+  const key = normalizeDeviceIndexCode(device.deviceIndexCode || device.macAddress || device.deviceKey || device.ipAddress);
+  const collectorStatus = savedCameraCollectorStatus(device);
+  const latestEvent = latestEvents.find((entry) => normalizeDeviceIndexCode(entry.deviceIndexCode || entry.event?.macAddress || entry.event?.deviceKey || entry.event?.ipAddress) === key);
+  const webUrl = defaultCameraWebUrl(device);
+  return `<div class="camera-row" data-device-key="${escapeHtml(key)}">
+    <div class="camera-main">
+      <strong>${escapeHtml(device.deviceName || device.ipAddress || device.macAddress || key || "未命名摄像头")}</strong>
+      <span>${escapeHtml(device.ipAddress || "-")} · ${escapeHtml(device.macAddress || device.deviceKey || "-")}</span>
+    </div>
+    <div>
+      <span class="status-badge ${collectorStatus.className}">${escapeHtml(collectorStatus.label)}</span>
+      <p class="hint">${escapeHtml(collectorStatus.detail)}</p>
+    </div>
+    <div class="camera-meta">
+      <span>SDK ${escapeHtml(device.sdkPort || 8000)}</span>
+      <span>${Number(device.type || 0) === 1 ? "出口/内侧" : "入口/外侧"}</span>
+      <span>最近事件 ${escapeHtml(latestEvent ? formatRelative(latestEvent.time) : "-")}</span>
+    </div>
+    <div class="camera-actions">
+      <button class="secondary" data-saved-action="open" data-web-url="${escapeHtml(webUrl)}">打开</button>
+      <button data-saved-action="register" data-device-key="${escapeHtml(key)}">下发</button>
+      <button class="secondary" data-saved-action="delete" data-device-key="${escapeHtml(key)}" data-mac="${escapeHtml(device.macAddress || "")}">删除</button>
+    </div>
+  </div>`;
+}
+
+function savedCameraCollectorStatus(device) {
+  const key = normalizeDeviceIndexCode(device.deviceIndexCode || device.macAddress || device.deviceKey || device.ipAddress);
+  for (const collector of collectors) {
+    for (const item of collector.devices || []) {
+      const itemKey = normalizeDeviceIndexCode(item.deviceKey || item.macAddress || item.ipAddress);
+      if (itemKey !== key) continue;
+      const error = item.lastError || item.worker?.lastError || "";
+      const status = item.worker?.status || item.connectionStatus || item.status || "";
+      if (error) return { label: "异常", className: "error", detail: error };
+      if (status === "running" || status === "connected" || item.status === "online") return { label: "在线", className: "online", detail: "采集器已识别该设备" };
+      return { label: status || "已下发", className: "reachable", detail: "等待 SDK 状态更新" };
+    }
+  }
+  return { label: "未下发", className: "muted", detail: "仅存在本地配置记录" };
+}
+
+async function handleSavedCameraAction(button) {
+  const action = button.dataset.savedAction;
+  if (action === "open") {
+    window.open(button.dataset.webUrl, "_blank", "noopener,noreferrer");
+    return;
+  }
+  if (action === "delete") {
+    await deleteSavedCamera(button);
+    return;
+  }
+  if (action === "register") {
+    await registerSavedCamera(button);
+  }
 }
 
 function savedDeviceConfig(device) {
@@ -316,12 +641,12 @@ function persistScanCardInput(input) {
 async function bindAndRegister(button) {
   const card = button.closest(".device-card");
   const read = (field) => card.querySelector(`[data-field="${field}"]`)?.value || "";
-  setScanCardStatus(button.dataset.deviceIndexCode, "registering...");
+  setScanCardStatus(button.dataset.deviceIndexCode, "正在注册...");
   try {
     await api("/api/devices/register-flow", {
       method: "POST",
       body: JSON.stringify({
-        collectorUrl: $("manualCollectorUrl")?.value || $("downCollectorUrl")?.value,
+        collectorUrl: collectorUrlValue(),
         device: {
           gatewayUrl: location.origin,
           shopId: $("shopId")?.value,
@@ -342,7 +667,7 @@ async function bindAndRegister(button) {
     });
     scanResults = scanResults.map((device) => {
       const key = normalizeDeviceIndexCode(device.macAddress || device.deviceKey || device.ipAddress);
-      return key && key === button.dataset.deviceIndexCode ? { ...device, bound: true, statusText: "registered, waiting for SDK status", lastError: "" } : device;
+      return key && key === button.dataset.deviceIndexCode ? { ...device, bound: true, statusText: "已注册，等待 SDK 状态", lastError: "" } : device;
     });
     await refresh();
   } catch (error) {
@@ -352,7 +677,8 @@ async function bindAndRegister(button) {
 }
 
 async function deleteDevice(button) {
-  const collectorUrl = $("manualCollectorUrl")?.value || $("downCollectorUrl")?.value;
+  if (!confirm("确认删除这条扫描/本地摄像头记录吗？")) return;
+  const collectorUrl = collectorUrlValue();
   const payload = {
     collectorUrl,
     deviceKey: button.dataset.deviceIndexCode || button.dataset.mac || button.dataset.ip,
@@ -364,7 +690,7 @@ async function deleteDevice(button) {
     await api("/api/collector-proxy/delete-device", {
       method: "POST",
       body: JSON.stringify(payload)
-    }).catch((error) => setScanCardStatus(button.dataset.deviceIndexCode, `collector delete failed: ${error.message}`));
+    }).catch((error) => setScanCardStatus(button.dataset.deviceIndexCode, `采集器删除失败：${error.message}`));
   }
   await api("/api/devices/delete", {
     method: "POST",
@@ -373,6 +699,40 @@ async function deleteDevice(button) {
   scanResults = scanResults.filter((device) => {
     const key = normalizeDeviceIndexCode(device.deviceIndexCode || device.macAddress || device.deviceKey || device.ipAddress);
     return key !== button.dataset.deviceIndexCode;
+  });
+  await refresh();
+}
+
+async function registerSavedCamera(button) {
+  const key = button.dataset.deviceKey;
+  const device = (state.devices || []).find((item) => normalizeDeviceIndexCode(item.deviceIndexCode || item.macAddress || item.deviceKey || item.ipAddress) === key);
+  if (!device) throw new Error("camera record not found");
+  const payload = {
+    ...device,
+    gatewayUrl: location.origin,
+    deviceKey: device.deviceIndexCode || device.deviceKey || device.macAddress || device.ipAddress,
+    sdkPort: device.sdkPort || state.cameraDefaults?.sdkPort || 8000,
+    username: device.username || state.cameraDefaults?.username || "admin",
+    password: device.password || ""
+  };
+  await api("/api/collector-proxy/register-device", {
+    method: "POST",
+    body: JSON.stringify({
+      collectorUrl: collectorUrlValue(),
+      device: payload
+    })
+  });
+  await refresh();
+}
+
+async function deleteSavedCamera(button) {
+  if (!confirm("确认删除这条本地摄像头记录吗？该操作会从 data/config.json 移除。")) return;
+  await api("/api/devices/delete", {
+    method: "POST",
+    body: JSON.stringify({
+      deviceKey: button.dataset.deviceKey,
+      macAddress: button.dataset.mac
+    })
   });
   await refresh();
 }
@@ -422,12 +782,13 @@ async function testCollector() {
   try {
     const data = await api("/api/collector-proxy/health", {
       method: "POST",
-      body: JSON.stringify({ collectorUrl: $("downCollectorUrl")?.value })
+      body: JSON.stringify({ collectorUrl: collectorUrlValue() })
     });
-    setText("downCollectorState", `collector reachable: ${data.result?.collector?.collectorId || "ok"}`);
+    setText("downCollectorState", `采集器可访问：${data.result?.collector?.collectorId || "ok"}`);
     await refresh();
   } catch (error) {
-    setText("downCollectorState", `collector failed: ${error.message}`);
+    setText("downCollectorState", `采集器测试失败：${error.message}`);
+    showError(error);
   }
 }
 
@@ -436,7 +797,7 @@ async function saveConfig() {
     method: "POST",
     body: JSON.stringify({
       localCollector: {
-        baseUrl: $("downCollectorUrl")?.value || $("manualCollectorUrl")?.value || "http://127.0.0.1:3100",
+        baseUrl: collectorUrlValue(),
         autoConnect: true
       },
       server: {
@@ -450,8 +811,22 @@ async function saveConfig() {
     })
   });
   state = data.state;
-  setText("configState", "配置已保存，重启后会自动读取 data/config.json");
   await refresh();
+}
+
+async function saveLegacyHikConfig() {
+  await saveConfig();
+  setText("legacyHikState", "hik 数据服务地址已保存，重启后会自动读取 data/config.json");
+}
+
+async function saveCameraDefaults() {
+  await saveConfig();
+  setText("cameraDefaultsState", "摄像头默认值已保存，重启后会自动读取 data/config.json");
+}
+
+async function saveCollectorConfig() {
+  await saveConfig();
+  setText("downCollectorState", "本地采集器地址已保存，重启后会自动读取 data/config.json");
 }
 
 async function registerCollectorManual() {
@@ -460,7 +835,7 @@ async function registerCollectorManual() {
     const response = await api("/api/collector-proxy/register-device", {
       method: "POST",
       body: JSON.stringify({
-        collectorUrl: $("manualCollectorUrl")?.value,
+        collectorUrl: collectorUrlValue(),
         device: {
           gatewayUrl: location.origin,
           shopId: $("shopId")?.value,
@@ -478,10 +853,10 @@ async function registerCollectorManual() {
         }
       })
     });
-    setText("manualCollectorState", `registered: ${response.result?.collectorId || "ok"}`);
+    setText("manualCollectorState", `已注册到采集器：${response.result?.collectorId || "ok"}`);
     await refresh();
   } catch (error) {
-    setText("manualCollectorState", `register failed: ${error.message}`);
+    setText("manualCollectorState", `注册失败：${error.message}`);
   }
 }
 
@@ -489,12 +864,12 @@ async function triggerCollectorTestEvent() {
   try {
     const data = await api("/api/collector-proxy/test-event", {
       method: "POST",
-      body: JSON.stringify({ collectorUrl: $("manualCollectorUrl")?.value })
+      body: JSON.stringify({ collectorUrl: collectorUrlValue() })
     });
-    setText("manualCollectorState", data.result?.event ? "collector test event sent" : "collector has no device");
+    setText("manualCollectorState", data.result?.event ? "采集器测试事件已发送" : "采集器暂无设备");
     await refresh();
   } catch (error) {
-    setText("manualCollectorState", `collector test failed: ${error.message}`);
+    setText("manualCollectorState", `采集器测试事件失败：${error.message}`);
   }
 }
 
@@ -505,7 +880,7 @@ function renderCollectors(items) {
   setValue("collectorHeartbeatUrl", `${location.origin}/api/collector/heartbeat`);
   const container = $("collectors");
   if (!container) return;
-  container.innerHTML = collectors.map(renderCollectorCard).join("") || `<div class="empty-state">No collectors</div>`;
+  container.innerHTML = collectors.map(renderCollectorCard).join("") || `<div class="empty-state">暂无采集器。请先启动本地采集器，再点击测试。</div>`;
   container.querySelectorAll('[data-action="collector-delete"]').forEach((button) => {
     button.onclick = () => deleteCollectorDevice(button).catch(showError);
   });
@@ -514,29 +889,54 @@ function renderCollectors(items) {
 function renderCollectorCard(collector) {
   const status = collector.status || "unknown";
   const devices = collector.devices || [];
-  return `<div class="collector-card">
+  const statusText = collectorStatusText(status);
+  return `<div class="collector-card ${escapeHtml(status)}">
     <div class="device-title">
       <strong>${escapeHtml(collector.collectorId)}</strong>
-      <span class="status-badge ${status === "online" ? "online" : status === "reachable" ? "muted" : "error"}">${escapeHtml(status)}</span>
+      <span class="status-badge ${status === "online" ? "online" : status === "reachable" ? "reachable" : "error"}">${escapeHtml(statusText)}</span>
     </div>
     <p>${escapeHtml(collector.baseUrl || collector.host || "")}</p>
-    <p>last heartbeat: ${escapeHtml(formatRelative(collector.lastSeen || collector.lastHeartbeatAt))}</p>
+    <p>最近心跳：${escapeHtml(formatRelative(collector.lastSeen || collector.lastHeartbeatAt))}</p>
     <div class="device-list">
-      ${devices.map((device) => renderCollectorDevice(device, collector)).join("") || "<span>No devices</span>"}
+      ${devices.map((device) => renderCollectorDevice(device, collector)).join("") || "<span>暂无下发设备</span>"}
     </div>
   </div>`;
+}
+
+function collectorStatusText(status) {
+  return {
+    online: "在线",
+    reachable: "可访问",
+    stale: "心跳过期",
+    "event-only": "仅事件"
+  }[status] || "未知";
 }
 
 function renderCollectorDevice(device, collector) {
   const error = device.lastError || device.worker?.lastError || "";
   const workerStatus = device.worker?.status || device.connectionStatus || device.status || "-";
+  const workerText = workerStatusText(workerStatus);
   const key = normalizeDeviceIndexCode(device.deviceKey || device.macAddress || device.ipAddress);
   return `<span>
     ${escapeHtml(device.macAddress || device.deviceKey || device.ipAddress)}
-    (${escapeHtml(workerStatus)})
+    (${escapeHtml(workerText)})
     ${error ? `<strong class="error-text">${escapeHtml(error)}</strong>` : ""}
-    <button data-action="collector-delete" data-collector-url="${escapeHtml($("downCollectorUrl")?.value || collector.baseUrl || collector.host || "")}" data-device-key="${escapeHtml(device.deviceKey || key)}" data-mac="${escapeHtml(device.macAddress || "")}">delete</button>
+    <button data-action="collector-delete" data-collector-url="${escapeHtml(collectorUrlValue() || collector.baseUrl || collector.host || "")}" data-device-key="${escapeHtml(device.deviceKey || key)}" data-mac="${escapeHtml(device.macAddress || "")}">删除</button>
   </span>`;
+}
+
+function workerStatusText(status) {
+  return {
+    running: "运行中",
+    connected: "已连接",
+    pending: "等待中",
+    starting: "启动中",
+    stopped: "已停止",
+    online: "在线",
+    offline: "离线",
+    error: "异常",
+    "-": "-"
+  }[status] || status || "-";
 }
 
 function syncCollectorDeviceStatus(items) {
@@ -564,7 +964,8 @@ function syncCollectorDeviceStatus(items) {
 }
 
 async function deleteCollectorDevice(button) {
-  const collectorUrl = button.dataset.collectorUrl || $("downCollectorUrl")?.value;
+  if (!confirm("确认从采集器和本地配置中删除这台设备吗？")) return;
+  const collectorUrl = button.dataset.collectorUrl || collectorUrlValue();
   await api("/api/collector-proxy/delete-device", {
     method: "POST",
     body: JSON.stringify({
@@ -587,10 +988,10 @@ async function deleteCollectorDevice(button) {
   await refresh();
 }
 
-function renderEvents(events) {
-  const container = $("events");
+function renderEvents(events, containerId = "events", limit = 100) {
+  const container = $(containerId);
   if (!container) return;
-  container.innerHTML = events.map((entry) => {
+  container.innerHTML = events.slice(0, limit).map((entry) => {
     const isHumanBody = entry.event?.eventType === "HumanBodyComparison";
     const alert = entry.payload?.EventNotificationAlert || {};
     const count = alert.peopleCounting || {};
@@ -600,8 +1001,8 @@ function renderEvents(events) {
     const eventType = entry.event?.eventType || alert.eventType || "-";
     const human = entry.event?.raw?.isapi?.HumanBodyComparison?.[0]?.HumanInfo || {};
     const responseText = legacy.enabled
-      ? (legacy.ok ? `write ok - ${legacy.path}` : `write failed - ${legacy.error || legacy.response?.data?.message || JSON.stringify(legacy.response?.data || legacy.response)}`)
-      : "hik-contact-data not configured";
+      ? (legacy.ok ? `写入成功 - ${legacy.path}` : `写入失败 - ${legacy.error || legacy.response?.data?.message || JSON.stringify(legacy.response?.data || legacy.response)}`)
+      : "尚未配置 hik 数据服务";
     const details = isHumanBody
       ? `<span>age <strong>${escapeHtml(human.ageGroup || "-")}</strong></span>
          <span>gender <strong>${escapeHtml(human.gender || "-")}</strong></span>
@@ -612,7 +1013,7 @@ function renderEvents(events) {
          <span>duplicate <strong>${escapeHtml(count.duplicatePeople ?? entry.event?.duplicatePeople ?? 0)}</strong></span>`;
     return `<div class="event-card">
       <div class="event-main">
-        <span class="status-badge ${ok ? "online" : "error"}">${ok ? "ok" : "failed"}</span>
+        <span class="status-badge ${ok ? "online" : "error"}">${ok ? "成功" : "失败"}</span>
         <strong>${escapeHtml(title)}</strong>
         <span>${escapeHtml(eventType)}</span>
         <span>${escapeHtml(formatTime(entry.time))}</span>
@@ -621,14 +1022,14 @@ function renderEvents(events) {
       <div class="event-counts">${details}</div>
       <div class="event-response">${escapeHtml(responseText)}</div>
     </div>`;
-  }).join("") || `<div class="empty-state">No events</div>`;
+  }).join("") || `<div class="empty-state">暂无事件</div>`;
 }
 
 async function refreshLogs() {
   const data = await api("/api/logs");
   const container = $("logs");
   if (!container) return;
-  container.innerHTML = (data.logs || []).map(renderLogItem).join("") || `<div class="empty-state">No logs</div>`;
+  container.innerHTML = (data.logs || []).map(renderLogItem).join("") || `<div class="empty-state">暂无日志</div>`;
 }
 
 function renderLogItem(log) {
@@ -700,27 +1101,35 @@ function bindHandlers() {
     tab.onclick = () => showPage(tab.dataset.page);
   });
   const handlers = [
-    ["refreshBtn", () => refresh().catch(showError)],
-    ["scanBtn", () => scan().catch(showError)],
-    ["bindBtn", () => bindDevice().catch(showError)],
+    ["refreshBtn", refresh],
+    ["setupRefreshBtn", refresh],
+    ["focusScanBtn", focusScanInput],
+    ["scanBtn", scan],
+    ["bindBtn", bindDevice],
+    ["saveLegacyHikBtn", saveLegacyHikConfig],
     ["connectLegacyHikBtn", connectLegacyHik],
-    ["loadShopsBtn", () => loadShops().catch(showError)],
-    ["saveShopBtn", () => saveShop().catch(showError)],
-    ["testEventBtn", () => testEvent().catch(showError)],
-    ["registerCollectorBtn", () => registerCollectorManual().catch(showError)],
-    ["testCollectorBtn", () => testCollector().catch(showError)],
-    ["saveConfigBtn", () => saveConfig().catch(showError)],
-    ["collectorTestEventBtn", () => triggerCollectorTestEvent().catch(showError)],
-    ["refreshCollectorsBtn", () => refresh().catch(showError)],
-    ["saveReleaseBtn", () => saveReleaseConfig().catch(showError)],
-    ["checkReleaseBtn", () => checkRelease().catch(showError)]
+    ["testEventBtn", testEvent],
+    ["registerCollectorBtn", registerCollectorManual],
+    ["testCollectorBtn", testCollector],
+    ["saveCameraDefaultsBtn", saveCameraDefaults],
+    ["saveCollectorConfigBtn", saveCollectorConfig],
+    ["collectorTestEventBtn", triggerCollectorTestEvent],
+    ["refreshCollectorsBtn", refresh],
+    ["saveReleaseBtn", saveReleaseConfig],
+    ["checkReleaseBtn", checkRelease]
   ];
   handlers.forEach(([id, handler]) => {
     const element = $(id);
-    if (element) element.onclick = handler;
+    if (element) element.onclick = () => runWithButton(element, handler).catch(showError);
   });
   const shopSelect = $("shopSelect");
   if (shopSelect) shopSelect.onchange = selectShop;
+  document.addEventListener("click", (event) => {
+    const copyButton = event.target.closest(".copy-release-url");
+    if (copyButton) copyReleaseUrl(copyButton.dataset.url);
+    const applyButton = event.target.closest(".apply-release");
+    if (applyButton) applyReleaseUpdate(applyButton.dataset.manifestUrl).catch(showError);
+  });
 }
 
 bindHandlers();

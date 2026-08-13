@@ -99,6 +99,30 @@ RELEASE_ROOT: release/out
 RELEASE_BASE_URL: http://www.fenqunshuju.com/releases/camera-local-console
 ```
 
+Public download entry:
+
+```text
+http://127.0.0.1:3200/
+http://www.fenqunshuju.com/releases/camera-local-console/
+```
+
+Release admin entry:
+
+```text
+http://127.0.0.1:3200/admin
+http://www.fenqunshuju.com/releases/camera-local-console/admin
+```
+
+Public machine-readable files:
+
+```text
+/channels/stable.json
+/channels/beta.json
+/channels/canary.json
+/packages/win-x64/<package>.zip
+/packages/linux-arm64/<package>.tar.gz
+```
+
 The admin manages file-based release metadata:
 
 ```text
@@ -118,10 +142,12 @@ release/out/
 First version supports:
 
 - import a package already present on the server
+- upload a package from the browser
 - calculate SHA256
 - write per-version manifest
 - promote a version to canary/beta/stable
 - view channel history
+- suggest the next patch version from existing imported packages
+- serve a user-facing download page and package URLs from `release/out`
 
 For production, put it behind nginx basic auth, VPN, or an internal-only firewall rule.
-

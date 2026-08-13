@@ -1,6 +1,7 @@
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
+import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { logger } from "./core/logger.js";
 import { loadState, saveState } from "./core/store.js";
@@ -81,6 +82,12 @@ async function handleApi(req, res) {
     };
     saveState(state);
     sendJson(res, 200, { ok: true, release: releaseState(), result });
+    return;
+  }
+  if (req.method === "POST" && url.pathname === "/api/release/apply") {
+    const body = await readJson(req);
+    const result = startLocalUpdate(body.manifestUrl || state.release?.manifestUrl, body.channel || state.release?.channel);
+    sendJson(res, 202, { ok: true, result });
     return;
   }
   if (req.method === "POST" && url.pathname === "/api/collector-proxy/health") {
@@ -693,6 +700,41 @@ async function checkRelease(manifestUrl) {
     updateAvailable: Boolean(latestVersion && latestVersion !== current.version),
     manifestUrl: url,
     manifest
+  };
+}
+
+function startLocalUpdate(manifestUrl, channel) {
+  const url = String(manifestUrl || defaultManifestUrl(channel || "stable")).trim();
+  if (process.platform !== "win32") {
+    throw new Error("当前本机更新仅支持 Windows 安装包。Linux ARM64 / RK3566 请使用镜像更新脚本。");
+  }
+  const installRoot = path.resolve(__dirname, "..");
+  const packagedUpdateCmd = path.join(installRoot, "update.cmd");
+  const sourceUpdateScript = path.join(installRoot, "scripts", "windows", "update-windows.ps1");
+  let command;
+  let args;
+  if (fs.existsSync(packagedUpdateCmd)) {
+    command = "cmd.exe";
+    args = ["/c", "start", "camera-console-update", packagedUpdateCmd, "-ManifestUrl", url];
+  } else if (fs.existsSync(sourceUpdateScript)) {
+    command = "powershell.exe";
+    args = ["-ExecutionPolicy", "Bypass", "-File", sourceUpdateScript, "-ManifestUrl", url];
+  } else {
+    throw new Error("未找到 update.cmd 或 scripts/windows/update-windows.ps1，无法执行本机更新。");
+  }
+  const child = spawn(command, args, {
+    cwd: installRoot,
+    detached: true,
+    stdio: "ignore",
+    windowsHide: false
+  });
+  child.unref();
+  logger.info("local update started", { manifestUrl: url, command });
+  return {
+    started: true,
+    platform: process.platform,
+    manifestUrl: url,
+    message: "已启动本机更新。更新过程会停止当前控制台，页面短暂断开属于正常现象。"
   };
 }
 

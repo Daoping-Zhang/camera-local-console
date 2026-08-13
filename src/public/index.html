@@ -10,7 +10,7 @@
   <header class="topbar">
     <div>
       <h1>摄像头本地控制台</h1>
-      <p>本地发现摄像头、连接本地采集器、接收 SDK 事件并转发到 hik-contact-data。</p>
+      <p>本地采集器、海康数据上报、摄像头注册和版本更新的运行面板。</p>
     </div>
     <div class="top-actions">
       <span id="modeBadge" class="status-badge muted">未配置</span>
@@ -20,16 +20,17 @@
 
   <main class="layout">
     <nav class="page-tabs wide">
-      <button class="tab active" data-page="page-register">摄像头注册</button>
-      <button class="tab" data-page="page-config">配置</button>
+      <button class="tab active" data-page="page-overview">总览</button>
+      <button class="tab" data-page="page-cameras">摄像头</button>
       <button class="tab" data-page="page-collectors">本地采集器</button>
-      <button class="tab" data-page="page-release">Release</button>
-      <button class="tab" data-page="page-logs">运行日志</button>
+      <button class="tab" data-page="page-uplink">数据上报</button>
+      <button class="tab" data-page="page-release">版本更新</button>
+      <button class="tab" data-page="page-logs">日志</button>
     </nav>
 
     <section class="status-strip wide">
       <div class="metric">
-        <span>hik-contact-data</span>
+        <span>hik 数据服务</span>
         <strong id="gatewayMetric">-</strong>
       </div>
       <div class="metric">
@@ -37,20 +38,71 @@
         <strong id="collectorMetric">-</strong>
       </div>
       <div class="metric">
+        <span>摄像头</span>
+        <strong id="deviceMetric">-</strong>
+      </div>
+      <div class="metric">
         <span>最近事件</span>
         <strong id="eventMetric">-</strong>
       </div>
-      <div class="metric">
-        <span>当前门店</span>
-        <strong id="shopMetric">-</strong>
-      </div>
     </section>
 
-    <section class="panel wide page page-register">
+    <section class="panel wide page page-overview overview-hero">
       <div class="section-head">
         <div>
-          <h2>扫描并注册摄像头</h2>
-          <p class="hint">扫描到设备后，在设备卡片里填写名称、账号密码和进出方向，然后注册到本地采集器。</p>
+          <h2>运行总览</h2>
+          <p class="hint">打开控制台后先看这里：系统是否在工作、卡在哪里、下一步做什么。</p>
+        </div>
+        <button id="setupRefreshBtn" class="secondary">重新检查</button>
+      </div>
+      <div id="setupChecklist" class="setup-checklist"></div>
+      <div id="nextAction" class="next-action"></div>
+    </section>
+
+    <section class="panel page page-overview">
+      <h2>最近事件</h2>
+      <div id="overviewEvents" class="event-list compact-list"></div>
+    </section>
+
+    <section class="panel page page-overview">
+      <h2>持久化配置</h2>
+      <div id="configSummary" class="summary-list"></div>
+    </section>
+
+    <section class="panel wide page page-cameras" hidden>
+      <div class="section-head">
+        <div>
+          <h2>摄像头默认值</h2>
+          <p class="hint">扫描注册时自动带入，单台摄像头仍可单独修改。</p>
+        </div>
+        <button id="saveCameraDefaultsBtn" class="secondary">保存默认值</button>
+      </div>
+      <div class="compact-grid">
+        <label>默认 SDK 端口<input id="collectorDefaultSdkPort" type="number" value="8000"></label>
+        <label>默认摄像头账号<input id="cameraUsername" autocomplete="off" placeholder="admin"></label>
+        <label>摄像头密码<input id="cameraPassword" type="password" autocomplete="off" placeholder="注册时使用"></label>
+        <label>保存摄像头密码<select id="saveCameraPassword"><option value="">否</option><option value="1">是</option></select></label>
+      </div>
+      <p id="cameraDefaultsState" class="hint"></p>
+    </section>
+
+    <section class="panel wide page page-cameras" hidden>
+      <div class="section-head">
+        <div>
+          <h2>已保存摄像头</h2>
+          <p class="hint">来源：data/config.json。这里显示历史保存记录，不代表摄像头当前一定在线。</p>
+        </div>
+        <button id="focusScanBtn" class="secondary">扫描添加</button>
+      </div>
+      <div id="savedCameraSummary" class="camera-summary"></div>
+      <div id="savedCameras" class="camera-list"></div>
+    </section>
+
+    <section class="panel wide page page-cameras" hidden id="scanSection">
+      <div class="section-head">
+        <div>
+          <h2>摄像头注册</h2>
+          <p class="hint">扫描网段或手动填写摄像头信息，注册后会保存到本地配置，并下发到本地采集器。</p>
         </div>
       </div>
       <div class="scan-row">
@@ -61,100 +113,111 @@
       <div id="scanResults" class="scan-results"></div>
     </section>
 
-    <section class="panel page page-register">
-      <h2>测试上报</h2>
+    <section class="panel page page-cameras" hidden>
+      <h2>测试客流事件</h2>
       <div class="grid">
-        <label>MAC<input id="testMac" placeholder="08:CC:81:C4:79:9E"></label>
+        <label>MAC / 设备标识<input id="testMac" placeholder="08:CC:81:C4:79:9E"></label>
         <label>进入<input id="testEnter" type="number" value="1"></label>
         <label>离开<input id="testExit" type="number" value="0"></label>
         <label>重复<input id="testDuplicate" type="number" value="0"></label>
       </div>
-      <button id="testEventBtn">发送测试客流事件</button>
-    </section>
-
-    <section class="panel wide page page-config" hidden>
-      <div class="section-head">
-        <div>
-          <h2>连接配置</h2>
-          <p class="hint">这些配置会保存到 data/config.json，重启后自动读取。</p>
-        </div>
-        <button id="saveConfigBtn" class="secondary">保存配置</button>
-      </div>
-      <div class="compact-grid">
-        <label>hik-contact-data 地址<input id="legacyHikBaseUrl" placeholder="http://www.fenqunshuju.com"></label>
-        <label>本地采集器地址<input id="downCollectorUrl" value="http://127.0.0.1:3100"></label>
-        <label>默认 SDK 端口<input id="collectorDefaultSdkPort" type="number" value="8000"></label>
-        <label>默认摄像头账号<input id="cameraUsername" autocomplete="off" placeholder="admin"></label>
-        <label>摄像头密码<input id="cameraPassword" type="password" autocomplete="off" placeholder="注册时使用"></label>
-        <label>保存摄像头密码<select id="saveCameraPassword"><option value="">否</option><option value="1">是</option></select></label>
-      </div>
-      <div class="actions">
-        <button id="connectLegacyHikBtn">测试 hik-contact-data</button>
-        <button id="testCollectorBtn" class="secondary">测试本地采集器</button>
-      </div>
-      <p id="legacyHikState" class="hint"></p>
-      <p id="downCollectorState" class="hint"></p>
-      <p id="configState" class="hint"></p>
-    </section>
-
-    <section class="panel wide page page-config" hidden>
-      <h2>门店配置</h2>
-      <p class="hint">本地调试可直接使用默认门店，也可以手动填写门店信息。</p>
-      <div class="compact-grid">
-        <label>选择门店<select id="shopSelect"><option value="">暂无门店</option></select></label>
-        <label>门店 ID<input id="shopId" placeholder="local-shop"></label>
-        <label>门店名称<input id="shopName" placeholder="Local Shop"></label>
-      </div>
-      <div class="actions">
-        <button id="loadShopsBtn">加载门店</button>
-        <button id="saveShopBtn">保存当前门店</button>
-      </div>
-    </section>
-
-    <section class="panel wide page page-release" hidden>
-      <div class="section-head">
-        <div>
-          <h2>Release</h2>
-          <p class="hint">配置更新通道，并检查远程发布清单。</p>
-        </div>
-        <button id="checkReleaseBtn" class="secondary">检查更新</button>
-      </div>
-      <div class="compact-grid">
-        <label>当前版本<input id="releaseVersion" readonly></label>
-        <label>通道<select id="releaseChannel"><option value="stable">stable</option><option value="beta">beta</option><option value="canary">canary</option></select></label>
-        <label>Manifest URL<input id="releaseManifestUrl"></label>
-      </div>
-      <div class="actions">
-        <button id="saveReleaseBtn">保存发布配置</button>
-      </div>
-      <p id="releaseState" class="hint"></p>
-      <pre id="releaseManifest" class="json-preview"></pre>
+      <button id="testEventBtn">发送测试事件</button>
     </section>
 
     <section class="panel wide page page-collectors" hidden>
       <div class="section-head">
         <div>
           <h2>本地采集器</h2>
-          <p class="hint">可访问表示端口已通；在线表示已完成初始化并向 3000 发送心跳。</p>
+          <p class="hint">在线表示采集器已向 3000 回传心跳；设备状态会显示 SDK worker 的连接结果。</p>
         </div>
         <button id="refreshCollectorsBtn" class="secondary">刷新状态</button>
       </div>
-      <div class="grid">
-        <label>事件上报地址<input id="collectorEventUrl" readonly></label>
-        <label>心跳上报地址<input id="collectorHeartbeatUrl" readonly></label>
-        <label hidden>Collector URL<input id="manualCollectorUrl" value="http://127.0.0.1:3100"></label>
-        <label hidden>SDK 端口<input id="sdkPort" type="number" value="8000"></label>
+
+      <div class="collector-band">
+        <div class="band-head">
+          <div>
+            <h3>连接配置</h3>
+            <p class="hint">控制台会通过这个地址检测采集器，并把摄像头注册信息下发过去。</p>
+          </div>
+          <div class="actions">
+            <button id="saveCollectorConfigBtn" class="secondary">保存地址</button>
+            <button id="testCollectorBtn">测试连接</button>
+          </div>
+        </div>
+        <div class="single-field">
+          <label>本地采集器地址<input id="downCollectorUrl" value="http://127.0.0.1:3100"></label>
+        </div>
+        <p id="downCollectorState" class="hint"></p>
       </div>
-      <div id="collectors" class="collector-grid"></div>
-      <div class="actions">
-        <button id="collectorTestEventBtn" class="secondary">触发采集器测试事件</button>
+
+      <div class="collector-band">
+        <div class="band-head">
+          <div>
+            <h3>控制台回调地址</h3>
+            <p class="hint">采集器启动后会把心跳和客流事件回传到这些地址。</p>
+          </div>
+        </div>
+        <div class="callback-list">
+          <label>事件上报地址<input id="collectorEventUrl" readonly></label>
+          <label>心跳上报地址<input id="collectorHeartbeatUrl" readonly></label>
+        </div>
       </div>
-      <p id="manualCollectorState" class="hint">摄像头注册后，本地采集器会连接 SDK，并把事件回传给 3000。</p>
+
+      <div class="collector-band">
+        <div class="band-head">
+          <div>
+            <h3>采集器状态</h3>
+            <p id="manualCollectorState" class="hint">摄像头注册后，本地采集器会连接 SDK，并把事件回传给 3000。</p>
+          </div>
+          <button id="collectorTestEventBtn" class="secondary">发送测试事件</button>
+        </div>
+        <div id="collectors" class="collector-grid"></div>
+      </div>
+
+      <label hidden>Collector URL<input id="manualCollectorUrl" value="http://127.0.0.1:3100"></label>
+      <label hidden>SDK 端口<input id="sdkPort" type="number" value="8000"></label>
     </section>
 
-    <section class="panel wide page page-collectors" hidden>
-      <h2>最近事件</h2>
+    <section class="panel wide page page-uplink" hidden>
+      <div class="section-head">
+        <div>
+          <h2>hik 数据上报</h2>
+          <p class="hint">采集器只回传到本地控制台；控制台再把客流和人体事件写入 hik 数据服务。</p>
+        </div>
+        <div class="actions">
+          <button id="saveLegacyHikBtn" class="secondary">保存地址</button>
+          <button id="connectLegacyHikBtn">测试数据服务</button>
+        </div>
+      </div>
+      <div class="compact-grid">
+        <label>hik 数据服务地址<input id="legacyHikBaseUrl" placeholder="http://www.fenqunshuju.com"></label>
+        <label>客流接口<input value="/api/hik/eventRcv" readonly></label>
+        <label>人体接口<input value="/api/hik/eventRtbw" readonly></label>
+      </div>
+      <p id="legacyHikState" class="hint"></p>
       <div id="events" class="event-list"></div>
+    </section>
+
+    <section class="panel wide page page-release" hidden>
+      <div class="section-head">
+        <div>
+          <h2>版本更新</h2>
+          <p class="hint">配置版本更新 server / manifest URL，检查当前安装包是否需要升级。</p>
+        </div>
+        <div class="actions">
+          <button id="saveReleaseBtn" class="secondary">保存更新配置</button>
+          <button id="checkReleaseBtn">检查更新</button>
+        </div>
+      </div>
+      <div class="compact-grid">
+        <label>当前版本<input id="releaseVersion" readonly></label>
+        <label>通道<select id="releaseChannel"><option value="stable">stable</option><option value="beta">beta</option><option value="canary">canary</option></select></label>
+        <label>更新清单 URL<input id="releaseManifestUrl"></label>
+      </div>
+      <p class="hint">已有安装建议在这里直接更新本机；下载安装包主要用于首次安装或人工兜底。</p>
+      <p id="releaseState" class="hint"></p>
+      <div id="releaseDownload" class="release-download" hidden></div>
+      <pre id="releaseManifest" class="json-preview"></pre>
     </section>
 
     <section class="panel wide page page-logs" hidden>
