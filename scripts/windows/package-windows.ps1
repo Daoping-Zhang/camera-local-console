@@ -185,6 +185,13 @@ if (-not $SkipSdk) {
 setlocal
 cd /d "%~dp0"
 
+set "NO_BROWSER=0"
+set "START_MINIMIZED=0"
+for %%A in (%*) do (
+  if /i "%%A"=="/no-browser" set "NO_BROWSER=1"
+  if /i "%%A"=="/minimized" set "START_MINIMIZED=1"
+)
+
 set "APP_DIR=%~dp0app"
 set "PORT=3000"
 set "COLLECTOR_PORT=3100"
@@ -225,9 +232,13 @@ set "GATEWAY_URL=http://127.0.0.1:%PORT%"
 set "HIK_SDK_DIR=%~dp0sdk\hikvision"
 set "COLLECTOR_ADAPTER=hikvision"
 
-start "camera-console" cmd /k ""%NODE_EXE%" "%APP_DIR%\src\server.js""
+if "%START_MINIMIZED%"=="1" (
+  start "camera-console" /min cmd /k ""%NODE_EXE%" "%APP_DIR%\src\server.js""
+) else (
+  start "camera-console" cmd /k ""%NODE_EXE%" "%APP_DIR%\src\server.js""
+)
 timeout /t 2 /nobreak >nul
-start "" "http://127.0.0.1:%PORT%"
+if "%NO_BROWSER%"=="0" start "" "http://127.0.0.1:%PORT%"
 '@ | Set-Content -Path (Join-Path $packageDir "start-all.cmd") -Encoding ASCII
 
 @'
@@ -256,11 +267,26 @@ echo stopped
 pause
 '@ | Set-Content -Path (Join-Path $packageDir "stop-all.cmd") -Encoding ASCII
 
+@'
+@echo off
+setlocal
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$startup=[Environment]::GetFolderPath('Startup'); $target=Join-Path (Get-Location) 'start-all.cmd'; $shortcut=Join-Path $startup 'camera-local-console.lnk'; $shell=New-Object -ComObject WScript.Shell; $lnk=$shell.CreateShortcut($shortcut); $lnk.TargetPath=$target; $lnk.Arguments='/minimized /no-browser'; $lnk.WorkingDirectory=(Get-Location).Path; $lnk.IconLocation=$target; $lnk.Save(); Write-Host 'Enabled startup auto-run:' $shortcut"
+pause
+'@ | Set-Content -Path (Join-Path $packageDir "enable-autostart.cmd") -Encoding ASCII
+
+@'
+@echo off
+setlocal
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$startup=[Environment]::GetFolderPath('Startup'); $shortcut=Join-Path $startup 'camera-local-console.lnk'; if (Test-Path -LiteralPath $shortcut) { Remove-Item -LiteralPath $shortcut -Force; Write-Host 'Disabled startup auto-run:' $shortcut } else { Write-Host 'Startup auto-run was not enabled.' }"
+pause
+'@ | Set-Content -Path (Join-Path $packageDir "disable-autostart.cmd") -Encoding ASCII
+
 @"
 camera-local-console Windows package
 
 Start:
   start-all.cmd
+  start-all.cmd /minimized /no-browser
 
 Open console:
   open-console.cmd
@@ -270,6 +296,10 @@ Stop:
 
 Update:
   update.cmd
+
+Auto start:
+  enable-autostart.cmd
+  disable-autostart.cmd
 
 Ports:
   Default console:   http://127.0.0.1:3000

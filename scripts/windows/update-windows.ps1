@@ -118,4 +118,10 @@ Copy-UpdateContent -SourceRoot $packageRoot.FullName -TargetRoot $installRoot
 } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $versionFile -Encoding UTF8
 
 Write-Host "Update completed. Backup: $backupPath"
-Write-Host "Run start-all.cmd to restart."
+$startCmd = Join-Path $installRoot "start-all.cmd"
+if (Test-Path -LiteralPath $startCmd) {
+  Write-Host "Restarting camera console..."
+  Start-Process -FilePath $startCmd -WorkingDirectory $installRoot
+} else {
+  Write-Host "start-all.cmd was not found. Please start the console manually."
+}
