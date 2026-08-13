@@ -10,18 +10,21 @@ const installRoot = process.env.INSTALL_ROOT || path.resolve(__dirname, "..", ".
 const manifestUrl = process.env.MANIFEST_URL || "";
 const channel = process.env.CHANNEL || "";
 const consoleUrl = process.env.CONSOLE_URL || "http://127.0.0.1:3000";
+const powershellExe = process.env.POWERSHELL_EXE || "powershell.exe";
 const updateScript = findUpdateScript();
 const startedAt = new Date().toISOString();
 const logs = [];
 let status = "starting";
 let message = "正在准备更新...";
+let stage = "prepare";
+let percent = 0;
 let finishedAt = "";
 let exitCode = null;
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   if (url.pathname === "/api/status") {
-    sendJson(res, { status, message, logs: logs.slice(-80), startedAt, finishedAt, exitCode, consoleUrl });
+    sendJson(res, { status, stage, percent, message, logs: logs.slice(-80), startedAt, finishedAt, exitCode, consoleUrl });
     return;
   }
   sendHtml(res, pageHtml());
@@ -35,6 +38,8 @@ server.listen(port, "127.0.0.1", () => {
 function runUpdate() {
   status = "running";
   message = "正在下载并安装更新...";
+  stage = "prepare";
+  percent = 0;
   if (!updateScript) {
     status = "error";
     message = "未找到 update-windows.ps1，无法执行更新。";
@@ -43,7 +48,7 @@ function runUpdate() {
   }
   const args = ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", updateScript, "-ManifestUrl", manifestUrl, "-RestartMode", "NoBrowser"];
   if (channel) args.push("-Channel", channel);
-  const child = spawn("powershell.exe", args, { cwd: installRoot, windowsHide: false });
+  const child = spawn(powershellExe, args, { cwd: installRoot, windowsHide: false });
   child.stdout.on("data", (chunk) => appendLog(String(chunk).trim()));
   child.stderr.on("data", (chunk) => appendLog(String(chunk).trim()));
   child.on("exit", (code) => {
@@ -81,7 +86,25 @@ function fsExists(filePath) {
 function appendLog(line) {
   if (!line) return;
   for (const item of line.split(/\r?\n/).filter(Boolean)) {
+    const progress = parseProgressLine(item);
+    if (progress) {
+      stage = progress.stage || stage;
+      percent = Number.isFinite(Number(progress.percent)) ? Number(progress.percent) : percent;
+      message = progress.message || message;
+      logs.push({ time: progress.time || new Date().toISOString(), line: progress.message || item });
+      continue;
+    }
     logs.push({ time: new Date().toISOString(), line: item });
+  }
+}
+
+function parseProgressLine(line) {
+  const prefix = "UPDATE_PROGRESS ";
+  if (!line.startsWith(prefix)) return null;
+  try {
+    return JSON.parse(line.slice(prefix.length));
+  } catch {
+    return null;
   }
 }
 
@@ -107,7 +130,8 @@ function pageHtml() {
     main{max-width:820px;margin:0 auto;padding:42px 20px}
     .panel{background:#fff;border:1px solid #d9dee7;border-radius:8px;padding:24px}
     h1{margin:0 0 8px;font-size:24px}p{margin:0 0 16px;color:#667085}
-    .bar{height:10px;background:#edf2f7;border-radius:999px;overflow:hidden;margin:18px 0}.bar span{display:block;height:100%;width:35%;background:#07835d;animation:pulse 1.4s infinite}
+    .percent{font-size:28px;font-weight:800;color:#07835d;margin:10px 0}
+    .bar{height:10px;background:#edf2f7;border-radius:999px;overflow:hidden;margin:18px 0}.bar span{display:block;height:100%;width:0;background:#07835d;transition:width .2s ease}.bar.unknown span{width:35%;animation:pulse 1.4s infinite}
     .done .bar span{width:100%;animation:none}.error .bar span{width:100%;background:#c62828;animation:none}
     pre{max-height:360px;overflow:auto;background:#0f172a;color:#dbeafe;border-radius:8px;padding:14px;white-space:pre-wrap}
     a{display:inline-block;margin-top:10px;color:#075e45;font-weight:700}
@@ -118,7 +142,8 @@ function pageHtml() {
   <main><section id="panel" class="panel">
     <h1 id="title">正在更新摄像头本地控制台</h1>
     <p id="message">正在准备更新...</p>
-    <div class="bar"><span></span></div>
+    <div id="percent" class="percent">0%</div>
+    <div id="bar" class="bar unknown"><span></span></div>
     <pre id="logs"></pre>
     <a id="consoleLink" href="${escapeHtml(consoleUrl)}">返回控制台</a>
   </section></main>
@@ -127,6 +152,12 @@ function pageHtml() {
       const res=await fetch('/api/status',{cache:'no-store'});
       const data=await res.json();
       document.getElementById('message').textContent=data.message||'';
+      const pct=Number(data.percent||0);
+      const hasPercent=data.stage&&data.stage!=='prepare';
+      document.getElementById('percent').textContent=(hasPercent||pct>0||data.status==='done')?Math.max(0,Math.min(100,pct))+'%':'准备中';
+      const bar=document.getElementById('bar');
+      bar.className='bar '+((hasPercent||pct>0||data.status==='done')?'':'unknown');
+      bar.querySelector('span').style.width=Math.max(0,Math.min(100,pct))+'%';
       document.getElementById('logs').textContent=(data.logs||[]).map(x=>'['+x.time+'] '+x.line).join('\\n');
       document.getElementById('consoleLink').href=data.consoleUrl;
       document.getElementById('panel').className='panel '+data.status;

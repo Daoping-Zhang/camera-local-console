@@ -16,6 +16,61 @@ function Read-JsonFile {
   return Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
 }
 
+function Write-ProgressEvent {
+  param(
+    [string]$Stage,
+    [int]$Percent,
+    [string]$Message
+  )
+  @{
+    type = "progress"
+    stage = $Stage
+    percent = $Percent
+    message = $Message
+    time = (Get-Date).ToString("s")
+  } | ConvertTo-Json -Compress | ForEach-Object { Write-Host "UPDATE_PROGRESS $_" }
+}
+
+function Download-FileWithProgress {
+  param(
+    [string]$Url,
+    [string]$OutFile
+  )
+  Write-ProgressEvent -Stage "download" -Percent 0 -Message "正在连接下载服务器..."
+  $request = [System.Net.HttpWebRequest]::Create($Url)
+  $request.UserAgent = "camera-local-console-updater"
+  $response = $request.GetResponse()
+  try {
+    $total = [int64]$response.ContentLength
+    $inputStream = $response.GetResponseStream()
+    $outputStream = [System.IO.File]::Create($OutFile)
+    try {
+      $buffer = New-Object byte[] (1024 * 1024)
+      $readTotal = [int64]0
+      $lastPercent = -1
+      while (($read = $inputStream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+        $outputStream.Write($buffer, 0, $read)
+        $readTotal += $read
+        if ($total -gt 0) {
+          $percent = [Math]::Min(100, [int](($readTotal * 100) / $total))
+          if ($percent -ne $lastPercent) {
+            Write-ProgressEvent -Stage "download" -Percent $percent -Message ("正在下载更新包 {0}%" -f $percent)
+            $lastPercent = $percent
+          }
+        } else {
+          Write-ProgressEvent -Stage "download" -Percent 0 -Message ("正在下载更新包 {0:n1} MB" -f ($readTotal / 1MB))
+        }
+      }
+    } finally {
+      $outputStream.Close()
+      $inputStream.Close()
+    }
+  } finally {
+    $response.Close()
+  }
+  Write-ProgressEvent -Stage "download" -Percent 100 -Message "更新包下载完成"
+}
+
 function Stop-CameraConsole {
   taskkill /FI "WINDOWTITLE eq camera-console*" /T /F | Out-Null
   taskkill /FI "WINDOWTITLE eq camera-console-3000*" /T /F | Out-Null
@@ -104,26 +159,33 @@ Remove-Item -LiteralPath $workDir -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $workDir | Out-Null
 
 Write-Host "Downloading: $($manifest.url)"
-Invoke-WebRequest -Uri $manifest.url -OutFile $downloadPath -UseBasicParsing
+Download-FileWithProgress -Url $manifest.url -OutFile $downloadPath
 
 if ($manifest.sha256) {
+  Write-ProgressEvent -Stage "verify" -Percent 0 -Message "正在校验安装包..."
   $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $downloadPath).Hash.ToLowerInvariant()
   $expected = ([string]$manifest.sha256).ToLowerInvariant()
   if ($actual -ne $expected) {
     throw "SHA256 mismatch. expected=$expected actual=$actual"
   }
+  Write-ProgressEvent -Stage "verify" -Percent 100 -Message "安装包校验完成"
 }
 
+Write-ProgressEvent -Stage "extract" -Percent 0 -Message "正在解压安装包..."
 Expand-Archive -LiteralPath $downloadPath -DestinationPath $extractPath -Force
+Write-ProgressEvent -Stage "extract" -Percent 100 -Message "安装包解压完成"
 $packageRoot = Get-ChildItem -LiteralPath $extractPath -Directory | Select-Object -First 1
 if (-not $packageRoot) {
   throw "Package zip does not contain a root directory."
 }
 
 Write-Host "Stopping running services..."
+Write-ProgressEvent -Stage "stop" -Percent 0 -Message "正在停止旧版本..."
 Stop-CameraConsole
+Write-ProgressEvent -Stage "stop" -Percent 100 -Message "旧版本已停止"
 
 Write-Host "Creating backup: $backupPath"
+Write-ProgressEvent -Stage "backup" -Percent 0 -Message "正在备份旧版本..."
 New-Item -ItemType Directory -Force -Path $backupPath | Out-Null
 foreach ($item in Get-ChildItem -LiteralPath $installRoot -Force) {
   if ($item.Name -in @(".update") -or $item.Name.StartsWith(".backup-")) {
@@ -131,9 +193,12 @@ foreach ($item in Get-ChildItem -LiteralPath $installRoot -Force) {
   }
   Copy-Item -LiteralPath $item.FullName -Destination $backupPath -Recurse -Force
 }
+Write-ProgressEvent -Stage "backup" -Percent 100 -Message "旧版本备份完成"
 
 Write-Host "Applying update..."
+Write-ProgressEvent -Stage "apply" -Percent 0 -Message "正在覆盖新版文件..."
 Copy-UpdateContent -SourceRoot $packageRoot.FullName -TargetRoot $installRoot
+Write-ProgressEvent -Stage "apply" -Percent 100 -Message "新版文件覆盖完成"
 
 @{
   version = $latestVersion
@@ -143,6 +208,7 @@ Copy-UpdateContent -SourceRoot $packageRoot.FullName -TargetRoot $installRoot
 } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $versionFile -Encoding UTF8
 
 Write-Host "Update completed. Backup: $backupPath"
+Write-ProgressEvent -Stage "restart" -Percent 0 -Message "正在重启控制台..."
 Sync-AutostartShortcut -InstallRoot $installRoot
 $startCmd = Join-Path $installRoot "start-all.cmd"
 if ($RestartMode -eq "None") {
@@ -151,6 +217,8 @@ if ($RestartMode -eq "None") {
   Write-Host "Restarting camera console..."
   $arguments = if ($RestartMode -eq "NoBrowser") { "/minimized /no-browser" } else { "" }
   Start-Process -FilePath $startCmd -ArgumentList $arguments -WorkingDirectory $installRoot
+  Write-ProgressEvent -Stage "done" -Percent 100 -Message "更新完成，控制台已重启"
 } else {
   Write-Host "start-all.cmd was not found. Please start the console manually."
+  Write-ProgressEvent -Stage "done" -Percent 100 -Message "更新完成，请手动启动控制台"
 }
