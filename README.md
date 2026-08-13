@@ -115,19 +115,19 @@ powershell -ExecutionPolicy Bypass -File scripts/windows/package-windows.ps1 -Ve
 
 Windows 后台服务依赖一个服务包装器 `WinSW-x64.exe`。它的作用是把本项目的 Node 程序注册成 Windows 服务，让它可以开机自启、后台运行和异常重启。
 
-打包时有两种方式提供这个文件。推荐提前放到：
+仓库已经内置：
 
 ```text
 vendor\winsw\WinSW-x64.exe
 ```
 
-也可以在打包命令中临时指定它的位置：
+所以正常打包不需要额外参数。如果以后要临时替换成另一个 WinSW 文件，可以用：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/windows/package-windows.ps1 -Version 0.1.1 -WinSWExe D:\tools\WinSW-x64.exe
 ```
 
-这里的 `D:\tools\WinSW-x64.exe` 只是示例路径，实际换成打包电脑上 `WinSW-x64.exe` 所在的位置。
+这里的 `D:\tools\WinSW-x64.exe` 只是示例路径，实际换成打包电脑上目标 `WinSW-x64.exe` 的位置。
 
 只生成目录、不生成 zip：
 
