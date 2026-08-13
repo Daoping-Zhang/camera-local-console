@@ -138,13 +138,15 @@ function Get-ListeningPids {
       }
     } catch {}
   }
-  return @($pids | Where-Object { $_ -and $_ -ne $PID } | Select-Object -Unique)
+  $runnerPid = 0
+  [int]::TryParse($env:UPDATE_RUNNER_PID, [ref]$runnerPid) | Out-Null
+  return @($pids | Where-Object { $_ -and $_ -ne $PID -and $_ -ne $runnerPid } | Select-Object -Unique)
 }
 
-function Stop-ProcessTreeByPid {
+function Stop-ProcessByPid {
   param([int]$ProcessId)
   try {
-    & taskkill.exe /PID $ProcessId /T /F 2>$null | Out-Null
+    & taskkill.exe /PID $ProcessId /F 2>$null | Out-Null
   } catch {
     try {
       Stop-Process -Id $ProcessId -Force -ErrorAction SilentlyContinue
@@ -159,15 +161,23 @@ function Stop-CameraConsole {
   foreach ($targetPort in $targetPorts) {
     foreach ($processId in Get-ListeningPids -Port $targetPort) {
       Write-Host ("Stopping process on port {0}: {1}" -f $targetPort, $processId)
-      Stop-ProcessTreeByPid -ProcessId $processId
+      Stop-ProcessByPid -ProcessId $processId
     }
   }
-  foreach ($title in @("camera-console*", "camera-console-3000*", "camera-collector-3100*")) {
-    try {
-      & taskkill.exe /FI "WINDOWTITLE eq $title" /T /F 2>$null | Out-Null
-    } catch {}
+  $deadline = (Get-Date).AddSeconds(10)
+  while ((Get-Date) -lt $deadline) {
+    $stillListening = $false
+    foreach ($targetPort in $targetPorts) {
+      if ((Get-ListeningPids -Port $targetPort).Count -gt 0) {
+        $stillListening = $true
+      }
+    }
+    if (-not $stillListening) {
+      return
+    }
+    Start-Sleep -Milliseconds 500
   }
-  Start-Sleep -Seconds 2
+  Write-Host "Some previous processes may still be shutting down; continuing update."
 }
 
 function Copy-UpdateContent {

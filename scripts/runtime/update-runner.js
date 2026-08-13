@@ -55,6 +55,7 @@ function runUpdate() {
     windowsHide: false,
     env: {
       ...process.env,
+      UPDATE_RUNNER_PID: String(process.pid),
       PYTHONIOENCODING: "utf-8"
     }
   });
