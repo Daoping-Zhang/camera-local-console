@@ -380,7 +380,15 @@ function syncTunnel() {
   if (key !== currentTunnelKey) {
     currentTunnelKey = key;
     stopTunnel();
-    startTunnel({ serverUrl, siteToken, localPort: PORT, onState: () => {} });
+    // onState：隧道状态变化时写回内存 state，供 /api/state 展示
+    startTunnel({
+      serverUrl,
+      siteToken,
+      localPort: PORT,
+      onState: (t) => {
+        state.tunnel = t || null;
+      },
+    });
   }
   startUpdatePolling();
 }

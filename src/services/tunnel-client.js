@@ -54,8 +54,13 @@ function connect({ serverUrl, siteToken, localPort }) {
   ws.onopen = () => {
     console.log("[tunnel] connected, waiting for ready");
   };
-  ws.onmessage = (ev) => handleMessage(ev.data, { localPort });
-  ws.onclose = () => {
+  ws.onmessage = (ev) => {
+    const raw = String(ev.data);
+    if (raw.includes('"ready"')) console.log("[tunnel] ready received:", raw.slice(0, 120));
+    handleMessage(ev.data, { localPort });
+  };
+  ws.onclose = (e) => {
+    console.log(`[tunnel] closed (code=${e?.code ?? "?"} reason=${e?.reason ?? ""})`);
     ws = null;
     tunnelInfo = null;
     onStateChange?.({ online: false });
