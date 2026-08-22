@@ -30,6 +30,14 @@ function abs(path) {
   if (path.startsWith(TUNNEL_PREFIX)) return path;
   return TUNNEL_PREFIX + path;
 }
+// 采集器 gatewayUrl：固定指向门店本机控制台（采集器跑在门店局域网，不走隧道/异地入口；
+// 异地打开时 location.origin 是服务器域名，会导致采集器连隧道 401）
+function localGatewayUrl() {
+  if (consoleInfoData && consoleInfoData.ip) {
+    return `http://${consoleInfoData.ip}:${consoleInfoData.port || 3000}`;
+  }
+  return "http://127.0.0.1:3000";
+}
 
 async function api(path, options = {}) {
   const response = await fetch(abs(path), {
@@ -842,7 +850,7 @@ async function bindAndRegister(button) {
       body: JSON.stringify({
         collectorUrl: collectorUrlValue(),
         device: {
-          gatewayUrl: location.origin,
+          gatewayUrl: localGatewayUrl(),
           shopId: $("shopId")?.value,
           shopName: $("shopName")?.value,
           ipAddress: button.dataset.ip,
@@ -904,7 +912,7 @@ async function registerSavedCamera(button) {
   if (!device) throw new Error("camera record not found");
   const payload = {
     ...device,
-    gatewayUrl: location.origin,
+    gatewayUrl: localGatewayUrl(),
     deviceKey: device.deviceIndexCode || device.deviceKey || device.macAddress || device.ipAddress,
     sdkPort: device.sdkPort || state.cameraDefaults?.sdkPort || 8000,
     username: device.username || state.cameraDefaults?.username || "admin",
@@ -1041,7 +1049,7 @@ async function registerCollectorManual() {
       body: JSON.stringify({
         collectorUrl: collectorUrlValue(),
         device: {
-          gatewayUrl: location.origin,
+          gatewayUrl: localGatewayUrl(),
           shopId: $("shopId")?.value,
           shopName: $("shopName")?.value,
           ipAddress: $("bindIp")?.value,
@@ -1080,8 +1088,8 @@ async function triggerCollectorTestEvent() {
 function renderCollectors(items) {
   collectors = items;
   syncCollectorDeviceStatus(items);
-  setValue("collectorEventUrl", `${location.origin}/api/collector/events`);
-  setValue("collectorHeartbeatUrl", `${location.origin}/api/collector/heartbeat`);
+  setValue("collectorEventUrl", "http://127.0.0.1:3000/api/collector/events");
+  setValue("collectorHeartbeatUrl", "http://127.0.0.1:3000/api/collector/heartbeat");
   const container = $("collectors");
   if (!container) return;
   container.innerHTML = collectors.map(renderCollectorCard).join("") || `<div class="empty-state">暂无采集器。3000 会自动尝试启动本地采集器，也可以点击“检查并下发”。</div>`;

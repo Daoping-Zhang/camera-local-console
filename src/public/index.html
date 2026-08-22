@@ -145,9 +145,9 @@
           </div>
         </div>
         <div class="single-field">
-          <label>本地采集器地址<input id="downCollectorUrl" value="http://127.0.0.1:3100"></label>
+          <label>本地采集器地址<input id="downCollectorUrl" value="http://127.0.0.1:3100" readonly title="采集器地址固定为本机 3100，无需配置"></label>
         </div>
-        <p class="hint">如果 3000 或 3100 端口被占用，Windows 包可以修改 <code>config\ports.env</code> 后重新启动。</p>
+        <p class="hint">采集器由控制台自动启动，固定监听 127.0.0.1:3100，无需配置。如 3100 端口被占用，可在 <code>config\ports.env</code> 调整后重启。</p>
         <p id="downCollectorState" class="hint"></p>
       </div>
 
