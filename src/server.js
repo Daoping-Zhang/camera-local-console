@@ -1125,7 +1125,7 @@ function publicState() {
 }
 
 function defaultManifestUrl(channel = "stable") {
-  return `https://kequn.fenqunshuju.com:8443/releases/camera-local-console/channels/${channel}.json`;
+  return `https://kequn.fenqunshuju.com/releases/camera-local-console/channels/${channel}.json`;
 }
 
 function releaseState() {

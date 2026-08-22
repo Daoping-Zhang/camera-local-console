@@ -7,7 +7,7 @@ const STORE_PATH = path.join(DATA_DIR, "config.json");
 const defaultState = {
   server: {
     // 数据服务地址（统一入口：事件上报 / 门店设备注册 / bootstrap 全部走它）+ 接入令牌
-    serverUrl: "https://kequn.fenqunshuju.com:8443",
+    serverUrl: "https://kequn.fenqunshuju.com",
     siteToken: "",
     localDebug: true
   },
@@ -31,7 +31,7 @@ const defaultState = {
   release: {
     version: "0.1.0",
     channel: "stable",
-    manifestUrl: "https://kequn.fenqunshuju.com:8443/releases/camera-local-console/channels/stable.json",
+    manifestUrl: "https://kequn.fenqunshuju.com/releases/camera-local-console/channels/stable.json",
     lastCheckAt: "",
     lastCheckResult: null
   },
