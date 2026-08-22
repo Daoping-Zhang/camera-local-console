@@ -393,6 +393,33 @@ function syncTunnel() {
     });
   }
   startUpdatePolling();
+  startConsoleHeartbeat();
+}
+
+/** 控制台心跳：每 30s 上报自身信息到后端 /api/edge/console（管理面板「状态」列据此显示在线） */
+let consoleHeartbeatTimer = null;
+function startConsoleHeartbeat() {
+  const { serverUrl, siteToken } = state.server || {};
+  const shopId = String(state.shop?.shopId || "");
+  if (!serverUrl || !siteToken || ["10001", "10002"].includes(shopId)) {
+    if (consoleHeartbeatTimer) { clearInterval(consoleHeartbeatTimer); consoleHeartbeatTimer = null; }
+    return;
+  }
+  if (consoleHeartbeatTimer) return;
+  const beat = () => {
+    try {
+      const info = consoleInfo();
+      backendPost(serverUrl, siteToken, "/api/edge/console", {
+        id: info.id,
+        name: info.name,
+        ip: info.ip,
+        port: info.port,
+        storeId: shopId,
+      }).catch(() => {});
+    } catch { /* 忽略，下轮再试 */ }
+  };
+  beat();
+  consoleHeartbeatTimer = setInterval(beat, 30_000);
 }
 
 /** 远程更新：每 30s 轮询后端更新任务，有任务则 detached 执行 update-linux.sh（脚本自行上报结果） */
