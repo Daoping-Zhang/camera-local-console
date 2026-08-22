@@ -69,7 +69,14 @@ function connect({ serverUrl, siteToken, localPort }) {
   };
   ws.onerror = (e) => {
     console.error("[tunnel] error", e?.message || "unknown");
+    // 错误后直接调度重连（Node 全局 WebSocket 的 onclose 不一定触发，不能只靠它）
     try { ws.close(); } catch {}
+    const t = tunnelInfo;
+    tunnelInfo = null;
+    onStateChange?.({ online: false, ...(t || {}) });
+    if (pingTimer) { clearInterval(pingTimer); pingTimer = null; }
+    ws = null;
+    scheduleReconnect({ serverUrl, siteToken, localPort });
   };
 }
 
