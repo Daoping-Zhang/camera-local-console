@@ -2,8 +2,10 @@
 # ============================================================
 # camera-local-console · Linux 安装包打包脚本（arm64 / x64）
 # 产出 tar.gz（裸机安装用，systemd 直接跑 node src/server.js）
-# 用法：bash scripts/linux/package-linux.sh [arm64|x64] [输出目录]
-#   默认架构 = 当前机器架构；输出目录默认 dist/
+# 用法：
+#   bash scripts/linux/package-linux.sh [arm64|x64] [版本号] [输出目录]
+#   默认架构 = 当前机器架构；版本号默认取 package.json；输出目录默认 dist/
+#   示例：bash scripts/linux/package-linux.sh arm64 0.1.1
 #   打包后把 tar.gz 上传到 Web 管理面板「发布管理」→ 上传安装包（平台选 linux-arm64/linux-x64）
 # ============================================================
 set -euo pipefail
@@ -24,8 +26,9 @@ case "$ARCH" in
 esac
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-OUT_ROOT="${2:-$ROOT/dist}"
-VERSION="$(node -e "console.log(require('$ROOT/package.json').version)" 2>/dev/null || echo "0.0.0")"
+OUT_ROOT="${3:-$ROOT/dist}"
+# 版本号：第 2 参显式指定；否则取 package.json
+VERSION="${2:-$(node -e "console.log(require('$ROOT/package.json').version)" 2>/dev/null || echo "0.0.0")}"
 PACKAGE_DIR="$OUT_ROOT/camera-local-console-$PLATFORM-$VERSION"
 TARBALL="$OUT_ROOT/camera-local-console-$PLATFORM-$VERSION.tar.gz"
 
