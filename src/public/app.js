@@ -19,8 +19,20 @@ function setValue(id, value) {
   if (element) element.value = value;
 }
 
+// 隧道前缀自适应：异地访问时 URL 形如 /tunnel/<port>/，所有绝对路径需加此前缀
+// 直接访问（http://IP:3000/）或本机访问时无前缀
+const TUNNEL_PREFIX = (() => {
+  const m = location.pathname.match(/^(\/tunnel\/[0-9]+)/);
+  return m ? m[1] : "";
+})();
+function abs(path) {
+  if (!TUNNEL_PREFIX) return path;
+  if (path.startsWith(TUNNEL_PREFIX)) return path;
+  return TUNNEL_PREFIX + path;
+}
+
 async function api(path, options = {}) {
-  const response = await fetch(path, {
+  const response = await fetch(abs(path), {
     headers: { "Content-Type": "application/json", ...(options.headers || {}) },
     ...options
   });
