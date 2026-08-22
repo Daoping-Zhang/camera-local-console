@@ -107,7 +107,9 @@ async function handleApi(req, res) {
     state.release = {
       ...(state.release || {}),
       channel,
-      manifestUrl: String(body.manifestUrl || defaultManifestUrl(channel)).trim()
+      manifestUrl: String(body.manifestUrl || defaultManifestUrl(channel)).trim(),
+      // 自动更新开关（默认开；关闭后不自动执行远程更新，仅在后台记录待更新）
+      autoUpdate: body.autoUpdate !== undefined ? !!body.autoUpdate : (state.release?.autoUpdate ?? true)
     };
     saveState(state);
     sendJson(res, 200, { ok: true, release: releaseState() });
@@ -414,6 +416,12 @@ async function checkUpdateTask() {
     const response = await getJson(joinUrl(serverUrl, "/api/edge/update-task"), { "X-Access-Token": siteToken });
     const task = response.data?.task;
     if (task?.status === "pending") {
+      const autoUpdate = state.release?.autoUpdate !== false;
+      if (!autoUpdate) {
+        // 自动更新已关闭：不执行，仅记录待更新（前端可提示"有新版待手动更新"）
+        logger.info("auto update disabled, skip task", { version: task.version });
+        return;
+      }
       updating = true;
       runUpdateTask(task);
       setTimeout(() => { updating = false; }, 120_000); // 执行窗口 2 分钟
@@ -1144,6 +1152,7 @@ function releaseState() {
     version: installed.version || release.version || readPackageVersion(),
     channel,
     manifestUrl: release.manifestUrl || defaultManifestUrl(channel),
+    autoUpdate: release.autoUpdate !== false,
     lastCheckAt: release.lastCheckAt || "",
     lastCheckResult: release.lastCheckResult || null
   };

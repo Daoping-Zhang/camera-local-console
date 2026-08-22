@@ -324,6 +324,8 @@ function renderRelease(release) {
   setValue("releaseVersion", release.version || "-");
   setValue("releaseChannel", release.channel || "stable");
   setValue("releaseManifestUrl", release.manifestUrl || "");
+  const auto = $("releaseAutoUpdate");
+  if (auto) auto.checked = release.autoUpdate !== false;
   const result = release.lastCheckResult;
   renderReleaseDownload(null, release.manifestUrl);
   renderReleaseOptions([]);
@@ -410,6 +412,21 @@ async function copyReleaseUrl(url) {
     setText("releaseState", "下载链接已复制");
   } catch {
     setText("releaseState", url);
+  }
+}
+
+async function toggleAutoUpdate(checked) {
+  const channel = $("releaseChannel")?.value || "stable";
+  const manifestUrl = $("releaseManifestUrl")?.value || "";
+  try {
+    const data = await api("/api/release/configure", {
+      method: "POST",
+      body: JSON.stringify({ channel, manifestUrl, autoUpdate: checked })
+    });
+    renderRelease(data.release || {});
+    setText("releaseState", checked ? "已开启自动更新" : "已关闭自动更新（总部下发的更新仅提示，需手动安装）");
+  } catch (e) {
+    setText("releaseState", "保存失败: " + e.message);
   }
 }
 

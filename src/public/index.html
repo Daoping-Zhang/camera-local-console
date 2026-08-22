@@ -228,8 +228,11 @@
         <label>当前版本<input id="releaseVersion" readonly></label>
         <label>通道<select id="releaseChannel"><option value="stable">stable</option><option value="beta">beta</option><option value="canary">canary</option></select></label>
         <label>更新清单 URL<input id="releaseManifestUrl"></label>
+        <label class="toggle-row">自动更新（总部下发后自动安装）
+          <input type="checkbox" id="releaseAutoUpdate" checked onchange="toggleAutoUpdate(this.checked)">
+        </label>
       </div>
-      <p class="hint">已有安装建议在这里直接更新本机；下载安装包主要用于首次安装或人工兜底。</p>
+      <p class="hint">已有安装建议在这里直接更新本机；下载安装包主要用于首次安装或人工兜底。关闭自动更新后，总部下发的更新仅提示、需在本页手动点击安装。</p>
       <p id="releaseState" class="hint"></p>
       <div id="releaseDownload" class="release-download" hidden></div>
       <div id="releaseOptions" class="release-options"></div>
