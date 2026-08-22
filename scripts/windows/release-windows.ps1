@@ -2,7 +2,7 @@ param(
   [string]$Version = "",
   [ValidateSet("canary", "beta", "stable")]
   [string]$Channel = "canary",
-  [string]$BaseUrl = "http://www.fenqunshuju.com/releases/camera-local-console",
+  [string]$BaseUrl = "https://kequn.fenqunshuju.com/releases/camera-local-console",
   [switch]$NoZip
 )
 

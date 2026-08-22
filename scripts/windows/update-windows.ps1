@@ -328,7 +328,7 @@ $current = Read-JsonFile -Path $versionFile
 $currentVersion = if ($current -and $current.version) { [string]$current.version } else { "0.0.0" }
 $currentChannel = if ($Channel) { $Channel } elseif ($current -and $current.channel) { [string]$current.channel } else { "stable" }
 if (-not $ManifestUrl) {
-  $ManifestUrl = "http://www.fenqunshuju.com/releases/camera-local-console/channels/$currentChannel.json"
+  $ManifestUrl = "https://kequn.fenqunshuju.com/releases/camera-local-console/channels/$currentChannel.json"
 }
 
 Write-Host "Current version: $currentVersion"

@@ -12,11 +12,11 @@
 
 | 用途 | 地址 |
 | --- | --- |
-| Windows 安装包下载页 | `https://www.fenqunshuju.com/releases/camera-local-console/` |
+| Windows 安装包下载页 | `https://kequn.fenqunshuju.com/releases/camera-local-console/` |
 | 本地控制台 | `http://127.0.0.1:3000` |
 | 本地采集器 | `http://127.0.0.1:3100` |
-| 版本更新 stable 通道 | `https://www.fenqunshuju.com/releases/camera-local-console/channels/stable.json` |
-| hik 数据服务 | `http://www.fenqunshuju.com` |
+| 版本更新 stable 通道 | `https://kequn.fenqunshuju.com/releases/camera-local-console/channels/stable.json` |
+| hik 数据服务 | `https://kequn.fenqunshuju.com` |
 
 ## 现场部署
 
@@ -183,7 +183,7 @@ http://127.0.0.1:3200
 服务器部署后公网路径：
 
 ```text
-https://www.fenqunshuju.com/releases/camera-local-console/admin
+https://kequn.fenqunshuju.com/releases/camera-local-console/admin
 ```
 
 发布通道：
@@ -311,7 +311,7 @@ SDK 端口是否为 8000
 确认客户电脑能访问：
 
 ```text
-https://www.fenqunshuju.com/releases/camera-local-console/
+https://kequn.fenqunshuju.com/releases/camera-local-console/
 ```
 
 ## 更多文档

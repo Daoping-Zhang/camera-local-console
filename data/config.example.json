@@ -3,7 +3,7 @@
     "baseUrl": "http://localhost:18091",
     "loginPath": "/user/login",
     "cameraDataPath": "/contact/sync/cameraData",
-    "legacyHikBaseUrl": "http://www.fenqunshuju.com",
+    "legacyHikBaseUrl": "https://kequn.fenqunshuju.com",
     "tokenHeader": "Authorization",
     "token": "",
     "localDebug": true
@@ -24,7 +24,7 @@
   "release": {
     "version": "0.1.0",
     "channel": "stable",
-    "manifestUrl": "http://www.fenqunshuju.com/releases/camera-local-console/channels/stable.json",
+    "manifestUrl": "https://kequn.fenqunshuju.com/releases/camera-local-console/channels/stable.json",
     "lastCheckAt": "",
     "lastCheckResult": null
   },

@@ -1,6 +1,8 @@
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
+import os from "node:os";
+import { randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { logger } from "./core/logger.js";
@@ -8,6 +10,7 @@ import { loadState, saveState } from "./core/store.js";
 import { getJson, postJson, joinUrl } from "./services/http-client.js";
 import { buildPeopleCountingPayload } from "./services/payload-builder.js";
 import { listInterfaces, scanSubnet } from "./services/scanner.js";
+import { startTunnel, stopTunnel, tunnelStatus } from "./services/tunnel-client.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, "public");
@@ -15,13 +18,22 @@ const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || "127.0.0.1";
 const LOCAL_COLLECTOR_URL = process.env.LOCAL_COLLECTOR_URL || (process.env.COLLECTOR_PORT ? `http://127.0.0.1:${process.env.COLLECTOR_PORT}` : "");
 
+let currentTunnelKey = null;
+let updateTimer = null;
+let updating = false;
 let state = loadState();
 state.devices = dedupeDeviceRecords(state.devices);
+// 控制台唯一标识（持久化；重装/重启不变）
+if (!state.console?.id) {
+  state.console = { id: randomBytes(6).toString("hex"), name: os.hostname() };
+  saveState(state);
+}
+syncTunnel();
 if (LOCAL_COLLECTOR_URL) {
   state.localCollector = { ...(state.localCollector || {}), baseUrl: LOCAL_COLLECTOR_URL };
 }
-if (process.env.LEGACY_HIK_BASE_URL) {
-  state.server.legacyHikBaseUrl = process.env.LEGACY_HIK_BASE_URL;
+if (process.env.SERVER_URL || process.env.LEGACY_HIK_BASE_URL) {
+  state.server.serverUrl = process.env.SERVER_URL || process.env.LEGACY_HIK_BASE_URL;
 }
 const recentEvents = [];
 const collectors = new Map();
@@ -66,7 +78,15 @@ async function handleApi(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
   if (req.method === "GET" && url.pathname === "/api/state") {
     scheduleConfiguredCollectorRefresh();
-    sendJson(res, 200, { ok: true, state: publicState(), collectors: listCollectors(), interfaces: listInterfaces(), events: recentEvents });
+    sendJson(res, 200, {
+      ok: true,
+      state: publicState(),
+      collectors: listCollectors(),
+      interfaces: listInterfaces(),
+      consoleInfo: consoleInfo(),
+      tunnel: tunnelStatus(),
+      events: recentEvents,
+    });
     return;
   }
   if (req.method === "GET" && url.pathname === "/api/logs") {
@@ -168,11 +188,40 @@ async function handleApi(req, res) {
     if (!baseUrl) {
       throw new Error("hik-contact-data URL is required");
     }
-    state.server.legacyHikBaseUrl = baseUrl;
+    state.server.serverUrl = baseUrl;
+    state.server.siteToken = String(body.siteToken || "").trim();
     saveState(state);
     const result = await probeLegacyHik(baseUrl);
+    syncTunnel();
     logger.info("legacy hik service configured", { baseUrl, reachable: result.reachable, status: result.status });
     sendJson(res, 200, { ok: true, result, state: publicState() });
+    return;
+  }
+  if (req.method === "POST" && url.pathname.startsWith("/api/backend/")) {
+    const body = await readJson(req);
+    const baseUrl = String(body.baseUrl || state.server.serverUrl || "").trim();
+    const token = String(body.token || state.server.siteToken || "").trim();
+    if (!baseUrl || !token) {
+      sendJson(res, 400, { ok: false, error: "未配置数据服务地址或接入令牌（请在「数据上报」页填写）" });
+      return;
+    }
+    if (url.pathname === "/api/backend/bootstrap") {
+      const result = await backendBootstrap(baseUrl, token);
+      sendJson(res, 200, { ok: true, result });
+      return;
+    }
+    const pathMap = {
+      "/api/backend/stores": "/api/edge/stores",
+      "/api/backend/devices": "/api/edge/devices",
+      "/api/backend/console": "/api/edge/console",
+    };
+    const path = pathMap[url.pathname];
+    if (!path) {
+      sendJson(res, 404, { ok: false, error: "not found" });
+      return;
+    }
+    const result = await backendPost(baseUrl, token, path, body.body || body.payload || {});
+    sendJson(res, 200, { ok: true, result });
     return;
   }
   if (req.method === "POST" && url.pathname === "/api/shop/save") {
@@ -182,6 +231,7 @@ async function handleApi(req, res) {
       shopName: String(body.shopName || "")
     };
     saveState(state);
+    syncTunnel();
     logger.info("shop saved", state.shop);
     sendJson(res, 200, { ok: true, state: publicState() });
     return;
@@ -196,7 +246,7 @@ async function handleApi(req, res) {
     collectorPortConflict = false;
     state.server = {
       ...(state.server || {}),
-      legacyHikBaseUrl: String(body.server?.legacyHikBaseUrl || state.server?.legacyHikBaseUrl || "").trim()
+      serverUrl: String(body.server?.serverUrl || state.server?.serverUrl || "").trim()
     };
     state.cameraDefaults = {
       ...(state.cameraDefaults || {}),
@@ -205,6 +255,7 @@ async function handleApi(req, res) {
       savePassword: Boolean(body.cameraDefaults?.savePassword)
     };
     saveState(state);
+    syncTunnel();
     scheduleConfiguredCollectorRefresh({ force: true });
     sendJson(res, 200, { ok: true, state: publicState() });
     return;
@@ -220,7 +271,7 @@ async function handleApi(req, res) {
   if (req.method === "POST" && url.pathname === "/api/devices/bind") {
     const body = await readJson(req);
     const record = buildDeviceRecord(body);
-    const remote = bindLocalDevice(record);
+    const remote = await bindLocalDeviceWithRemote(record);
     state.devices = state.devices.filter((item) => deviceUniqueKey(item) !== deviceUniqueKey(record));
     state.devices.unshift({ ...record, localId: `${Date.now()}`, remote });
     state.devices = dedupeDeviceRecords(state.devices).slice(0, 50);
@@ -228,6 +279,21 @@ async function handleApi(req, res) {
     scheduleConfiguredCollectorRefresh({ force: true });
     logger.info("device bound", { shopId: record.shopId, macAddress: record.macAddress, type: record.type });
     sendJson(res, 200, { ok: true, record, remote, state: publicState() });
+    return;
+  }
+  if (req.method === "POST" && url.pathname === "/api/devices/update") {
+    const body = await readJson(req);
+    const key = deviceUniqueKey({ macAddress: body.deviceKey || body.macAddress || body.deviceIndexCode || body.deviceId });
+    let updated = false;
+    state.devices = state.devices.map((device) => {
+      if (deviceUniqueKey(device) !== key) return device;
+      updated = true;
+      const next = { ...device };
+      if (body.positionType) next.positionType = String(body.positionType);
+      return next;
+    });
+    if (updated) saveState(state);
+    sendJson(res, 200, { ok: true, updated, state: publicState() });
     return;
   }
   if (req.method === "POST" && url.pathname === "/api/devices/delete") {
@@ -298,6 +364,144 @@ function bindLocalDevice(record) {
   };
 }
 
+/** 远端注册设备：调后端 POST /api/edge/devices（X-Access-Token） */
+/** 隧道自动启停：配置了数据服务地址 + 令牌 + 后端门店（非本地调试店）时启动 */
+function syncTunnel() {
+  const { serverUrl, siteToken } = state.server || {};
+  const shopId = String(state.shop?.shopId || "");
+  const isDebugShop = ["10001", "10002"].includes(shopId);
+  const ready = Boolean(serverUrl && siteToken && shopId && !isDebugShop);
+  if (!ready) {
+    stopTunnel();
+    currentTunnelKey = null;
+    return;
+  }
+  const key = `${serverUrl}|${siteToken}|${shopId}|${PORT}`;
+  if (key !== currentTunnelKey) {
+    currentTunnelKey = key;
+    stopTunnel();
+    startTunnel({ serverUrl, siteToken, localPort: PORT, onState: () => {} });
+  }
+  startUpdatePolling();
+}
+
+/** 远程更新：每 30s 轮询后端更新任务，有任务则 detached 执行 update-linux.sh（脚本自行上报结果） */
+function startUpdatePolling() {
+  const { serverUrl, siteToken } = state.server || {};
+  const shopId = String(state.shop?.shopId || "");
+  if (!serverUrl || !siteToken || ["10001", "10002"].includes(shopId)) {
+    if (updateTimer) { clearInterval(updateTimer); updateTimer = null; }
+    return;
+  }
+  if (updateTimer) return;
+  updateTimer = setInterval(checkUpdateTask, 30_000);
+  checkUpdateTask();
+}
+
+async function checkUpdateTask() {
+  if (updating) return;
+  const { serverUrl, siteToken } = state.server || {};
+  if (!serverUrl || !siteToken) return;
+  try {
+    const response = await getJson(joinUrl(serverUrl, "/api/edge/update-task"), { "X-Access-Token": siteToken });
+    const task = response.data?.task;
+    if (task?.status === "pending") {
+      updating = true;
+      runUpdateTask(task);
+      setTimeout(() => { updating = false; }, 120_000); // 执行窗口 2 分钟
+    }
+  } catch { /* 后端不可达忽略，下轮再试 */ }
+}
+
+function runUpdateTask(task) {
+  const installRoot = resolveInstallRoot();
+  const updater = path.join(installRoot, "scripts", "linux", "update-linux.sh");
+  const { serverUrl, siteToken } = state.server || {};
+  if (!fs.existsSync(updater)) {
+    logger.warn("update runner missing", { updater });
+    updating = false;
+    return;
+  }
+  const args = [updater, task.url, task.sha256, task.version, installRoot, serverUrl, siteToken, String(state.shop?.shopId || "")];
+  const child = spawn("bash", args, { detached: true, stdio: "ignore" });
+  child.unref();
+  logger.info("remote update started", { version: task.version, url: task.url });
+}
+
+async function registerDeviceRemote(record) {
+  const baseUrl = state.server.serverUrl;
+  const token = state.server.siteToken;
+  if (!baseUrl || !token) {
+    return { enabled: false, message: "未配置数据服务地址或接入令牌（可在「hik 数据上报」页填写）" };
+  }
+  const deviceIndexCode = String(record.deviceIndexCode || record.macAddress || record.deviceKey || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[:\-]/g, "");
+  const storeId = record.storeId != null ? record.storeId : record.shopId != null ? record.shopId : null;
+  const url = joinUrl(baseUrl, "/api/edge/devices");
+  try {
+    const response = await postJson(url, {
+      deviceIndexCode,
+      cameraIndexCode: record.cameraIndexCode || "",
+      macAddress: record.macAddress || "",
+      storeId,
+      positionType: record.positionType || "UNKNOWN",
+      deviceName: record.deviceName || "",
+      ipAddress: record.ipAddress || "",
+    }, { "X-Access-Token": token });
+    const ok = response.ok && response.data?.ok === true;
+    logger.info("remote device register", {
+      url, deviceIndexCode, storeId, ok,
+      message: ok ? "" : (response.data?.error || `HTTP ${response.status}`)
+    });
+    return {
+      enabled: true,
+      ok,
+      url,
+      message: ok ? "远端注册成功" : (response.data?.error || `HTTP ${response.status}`),
+      response: response.data
+    };
+  } catch (error) {
+    logger.warn("remote device register failed", { url, error: error.message });
+    return { enabled: true, ok: false, url, message: error.message };
+  }
+}
+
+/** 远端注册设备（async 版本，绑定本地设备后调用） */
+async function bindLocalDeviceWithRemote(record) {
+  const local = bindLocalDevice(record);
+  const remote = await registerDeviceRemote(record);
+  return {
+    ...local,
+    remote,
+  };
+}
+
+/** 拉取后端 bootstrap（门店/品牌/已有设备，供下拉选取） */
+async function backendBootstrap(baseUrl, token) {
+  const macs = dedupeDeviceRecords(state.devices)
+    .map((d) => d.macAddress || "")
+    .filter(Boolean)
+    .join(",");
+  const url = joinUrl(baseUrl, "/api/edge/bootstrap" + (macs ? `?macs=${encodeURIComponent(macs)}` : ""));
+  const response = await getJson(url, { "X-Access-Token": token });
+  if (!response.ok) {
+    throw new Error(response.data?.error || `bootstrap failed with ${response.status}`);
+  }
+  return response.data;
+}
+
+/** 调后端 POST 接口（edge/stores、edge/devices） */
+async function backendPost(baseUrl, token, path, body) {
+  const url = joinUrl(baseUrl, path);
+  const response = await postJson(url, body || {}, { "X-Access-Token": token });
+  if (!response.ok) {
+    throw new Error(response.data?.error || `request failed with ${response.status}`);
+  }
+  return response.data;
+}
+
 async function registerDeviceFlow(body) {
   const steps = [];
   const collectorUrl = body.collectorUrl || state.localCollector?.baseUrl;
@@ -315,7 +519,7 @@ async function registerDeviceFlow(body) {
 
   steps.push({ name: "local-device-record", status: "running" });
   const record = buildDeviceRecord(device);
-  const remote = bindLocalDevice(record);
+  const remote = await bindLocalDeviceWithRemote(record);
   state.localCollector = { ...(state.localCollector || {}), baseUrl: collectorUrl };
   state.devices = state.devices.filter((item) => deviceUniqueKey(item) !== deviceUniqueKey(record));
   state.devices.unshift({ ...record, localId: `${Date.now()}`, remote, collector });
@@ -527,6 +731,7 @@ function buildDeviceRecord(body) {
     shopId,
     shopName: body.shopName || state.shop.shopName || "Local Shop",
     type: Number(body.type),
+    positionType: body.positionType || "UNKNOWN",
     macAddress,
     deviceKey: macAddress,
     deviceIndexCode: macAddress,
@@ -657,7 +862,7 @@ async function probeLegacyEndpoint(baseUrl, path, payload) {
 }
 
 async function forwardLegacyHikEvent(event) {
-  const baseUrl = state.server.legacyHikBaseUrl;
+  const baseUrl = state.server.serverUrl;
   if (!baseUrl) return { enabled: false, deviceIndexCode: deviceIndexCode(event) };
 
   const isHumanBody = event.eventType === "HumanBodyComparison";
@@ -667,7 +872,9 @@ async function forwardLegacyHikEvent(event) {
 
   const url = joinUrl(baseUrl, path);
   try {
-    const response = await postJson(url, payload);
+    const headers = {};
+    if (state.server.siteToken) headers["X-Access-Token"] = state.server.siteToken;
+    const response = await postJson(url, payload, headers);
     if (response.ok && response.data?.code === 200) {
       logger.info("legacy hik event forwarded", { url, eventType: event.eventType, deviceIndexCode: deviceIndexCode(event) });
     } else {
@@ -884,21 +1091,41 @@ function listCollectors() {
   });
 }
 
+/** 控制台自身信息（上报给后端，Web 端一键跳转用）：局域网 IP + 端口 */
+function consoleInfo() {
+  return {
+    id: state.console?.id || "",
+    name: state.console?.name || os.hostname(),
+    ip: detectLanIp(),
+    port: PORT,
+  };
+}
+
+/** 探测局域网 IP：优先私有网段（10./172.16-31./192.168.） */
+function detectLanIp() {
+  const ifaces = listInterfaces();
+  for (const iface of ifaces) {
+    if (/^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.)/.test(iface.address)) return iface.address;
+  }
+  return ifaces[0]?.address || "127.0.0.1";
+}
+
 function publicState() {
   return {
     ...state,
     devices: dedupeDeviceRecords(state.devices),
     release: releaseState(),
     server: {
-      legacyHikBaseUrl: state.server.legacyHikBaseUrl || "",
-      mode: state.server.legacyHikBaseUrl ? "hik-contact-data" : "offline",
+      serverUrl: state.server.serverUrl || "",
+      siteToken: state.server.siteToken || "",
+      mode: state.server.serverUrl ? "hik-contact-data" : "offline",
       token: ""
     }
   };
 }
 
 function defaultManifestUrl(channel = "stable") {
-  return `http://www.fenqunshuju.com/releases/camera-local-console/channels/${channel}.json`;
+  return `https://kequn.fenqunshuju.com/releases/camera-local-console/channels/${channel}.json`;
 }
 
 function releaseState() {

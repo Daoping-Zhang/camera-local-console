@@ -2,6 +2,8 @@ const $ = (id) => document.getElementById(id);
 
 let state = null;
 let shops = [];
+let backendStores = []; // 来自后端 bootstrap 的门店（id=后端 store.id）
+let consoleInfoData = null; // 控制台自身信息（局域网 IP/端口），用于上报给后端
 let collectors = [];
 let latestEvents = [];
 let scanResults = [];
@@ -83,8 +85,10 @@ function showPage(pageClass) {
 async function refresh() {
   const data = await api("/api/state");
   state = data.state;
+  consoleInfoData = data.consoleInfo || null;
   latestEvents = data.events || [];
-  setValue("legacyHikBaseUrl", state.server.legacyHikBaseUrl || "");
+  setValue("serverUrl", state.server.serverUrl || "");
+  setValue("siteToken", state.server.siteToken || "");
   setValue("downCollectorUrl", state.localCollector?.baseUrl || "http://127.0.0.1:3100");
   setValue("manualCollectorUrl", state.localCollector?.baseUrl || "http://127.0.0.1:3100");
   setValue("collectorDefaultSdkPort", state.cameraDefaults?.sdkPort || 8000);
@@ -110,7 +114,7 @@ async function refresh() {
 }
 
 function renderModeBadge() {
-  const configured = Boolean(state?.server?.legacyHikBaseUrl);
+  const configured = Boolean(state?.server?.serverUrl);
   const element = $("modeBadge");
   if (!element) return;
   element.textContent = configured ? "数据服务已配置" : "数据服务未配置";
@@ -125,7 +129,7 @@ function renderMetrics() {
   const lastEvent = latestEvents[0];
   const lastEventMac = lastEvent?.event?.macAddress || lastEvent?.payload?.EventNotificationAlert?.macAddress || "-";
   const savedDeviceCount = uniqueSavedDevices(state.devices || []).length;
-  setText("gatewayMetric", state.server.legacyHikBaseUrl ? "已配置" : "未配置");
+  setText("gatewayMetric", state.server.serverUrl ? "已配置" : "未配置");
   setText("deviceMetric", `${savedDeviceCount} 台已保存`);
   setText("collectorMetric", `${collectors.length} 个本地采集器，${onlineCount} 已回传，${reachableCount} 可用，${staleCount} 过期`);
   setText("eventMetric", lastEvent ? `${formatRelative(lastEvent.time)} - ${lastEventMac}` : "暂无");
@@ -133,7 +137,7 @@ function renderMetrics() {
 
 function setupItems() {
   const latestEvent = latestEvents[0];
-  const hasBackend = Boolean(state?.server?.legacyHikBaseUrl);
+  const hasBackend = Boolean(state?.server?.serverUrl);
   const onlineCollectors = collectors.filter((collector) => collector.status === "online");
   const reachableCollectors = collectors.filter((collector) => collector.status === "reachable");
   const registeredDevices = uniqueSavedDevices(state?.devices || []).length;
@@ -265,7 +269,7 @@ function renderConfigSummary() {
   const items = [
     { label: "配置文件", value: "data/config.json", action: "", actionLabel: "" },
     { label: "本地采集器", value: state.localCollector?.baseUrl ? "已配置" : "未配置", action: "page-collectors", actionLabel: "去修改" },
-    { label: "hik 数据服务", value: state.server?.legacyHikBaseUrl ? "已配置" : "未配置", action: "page-uplink", actionLabel: "去修改" },
+    { label: "hik 数据服务", value: state.server?.serverUrl ? "已配置" : "未配置", action: "page-uplink", actionLabel: "去修改" },
     { label: "已保存摄像头", value: `${savedDeviceCount} 台`, action: "page-cameras", actionLabel: "查看" },
     { label: "默认 SDK 端口", value: state.cameraDefaults?.sdkPort || 8000, action: "page-cameras", actionLabel: "去修改" },
     { label: "保存摄像头密码", value: state.cameraDefaults?.savePassword ? "是" : "否", action: "page-cameras", actionLabel: "去修改" },
@@ -448,24 +452,97 @@ function renderShopSelect() {
   const select = $("shopSelect");
   if (!select) return;
   const currentShopId = String($("shopId")?.value || state?.shop?.shopId || "");
+  const options = backendStores.length ? backendStores : shops;
   select.innerHTML = [
-    `<option value="">${shops.length ? "Select shop" : "No shops"}</option>`,
-    ...shops.map((shop) => `<option value="${escapeHtml(shop.id)}">${escapeHtml(shop.name || "Unnamed shop")} #${escapeHtml(shop.id)}</option>`)
+    `<option value="">${options.length ? "请选择门店" : "无门店（可新建）"}</option>`,
+    ...options.map((shop) => `<option value="${escapeHtml(shop.id)}">${escapeHtml(shop.name || "Unnamed shop")}</option>`)
   ].join("");
-  if (currentShopId && shops.some((shop) => String(shop.id) === currentShopId)) select.value = currentShopId;
+  if (currentShopId && options.some((shop) => String(shop.id) === currentShopId)) select.value = currentShopId;
 }
 
 function selectShop() {
-  const shop = shops.find((item) => String(item.id) === $("shopSelect")?.value);
+  const shop = (backendStores.length ? backendStores : shops).find((item) => String(item.id) === $("shopSelect")?.value);
   if (!shop) return;
   setValue("shopId", shop.id);
   setValue("shopName", shop.name || "");
 }
 
 async function loadShops() {
+  backendStores = [];
   const data = await api("/api/shops");
   shops = data.shops || [];
   renderShopSelect();
+}
+
+/** 从后端拉取门店（需要已配置数据服务地址 + 接入令牌）
+ *  门店令牌 → 自动绑定该店；品牌令牌 → 门店列表（含未绑定标记）供选择/新建 */
+async function loadBackendShops() {
+  try {
+    const data = await api("/api/backend/bootstrap", { method: "POST", body: JSON.stringify({}) });
+    const result = data.result || {};
+    backendStores = (result.stores || []).map((s) => ({
+      id: s.id, name: s.name, bound: s.bound, brandName: s.brandName,
+    }));
+    renderShopSelect();
+    const tokenType = result.token?.type;
+    if (tokenType === "store") {
+      const store = backendStores[0];
+      if (store) {
+        setValue("shopId", store.id);
+        setValue("shopName", store.name);
+        await saveShop(); // 内部会 refresh + registerConsole
+      }
+      setText("shopState", `门店令牌：已自动绑定「${store ? store.name : "-"}」，直接进入摄像头注册即可`);
+    } else {
+      const unbound = backendStores.filter((s) => s.bound === false).length;
+      setText("shopState", `品牌令牌：${backendStores.length} 家门店（${unbound} 家未绑定），请选择一家或新建`);
+      registerConsole(); // 品牌 token：若已选过门店则顺带刷新控制台信息
+    }
+  } catch (error) {
+    setText("shopState", `拉取失败：${error.message}（请确认已填写数据服务地址和接入令牌）`);
+    showError(error);
+  }
+}
+
+/** 新建门店并选中 */
+async function createBackendShop() {
+  const name = $("newShopName")?.value?.trim();
+  if (!name) {
+    setText("shopState", "请填写新建门店名称");
+    return;
+  }
+  try {
+    await api("/api/backend/stores", {
+      method: "POST",
+      body: JSON.stringify({ body: { name, businessHours: $("newShopHours")?.value?.trim() || "" } })
+    });
+    setValue("newShopName", "");
+    await loadBackendShops();
+    setText("shopState", "门店已创建，请从下拉中选择");
+  } catch (error) {
+    setText("shopState", `新建门店失败：${error.message}`);
+    showError(error);
+  }
+}
+
+/** 上报控制台自身信息（IP/端口）到后端，Web 管理面板可一键跳转 */
+async function registerConsole() {
+  const storeId = $("shopId")?.value;
+  if (!storeId || !consoleInfoData) return;
+  try {
+    await api("/api/backend/console", {
+      method: "POST",
+      body: JSON.stringify({
+        body: {
+          storeId,
+          id: consoleInfoData.id,
+          name: consoleInfoData.name,
+          ip: consoleInfoData.ip,
+          port: consoleInfoData.port,
+        },
+      }),
+    });
+  } catch (_) { /* 上报失败不阻断（例如未配置后端时） */ }
 }
 
 async function saveShop() {
@@ -474,19 +551,21 @@ async function saveShop() {
     body: JSON.stringify({ shopId: $("shopId")?.value, shopName: $("shopName")?.value })
   });
   await refresh();
+  await registerConsole();
 }
 
 async function connectLegacyHik() {
   try {
     const data = await api("/api/legacy-hik/connect", {
       method: "POST",
-      body: JSON.stringify({ baseUrl: $("legacyHikBaseUrl")?.value })
+      body: JSON.stringify({ baseUrl: $("serverUrl")?.value, siteToken: $("siteToken")?.value })
     });
     const endpoints = data.result?.endpoints || {};
     const rcv = endpoints.eventRcv?.ok ? "客流接口可用" : `客流接口失败：${endpoints.eventRcv?.message || "-"}`;
     const rtbw = endpoints.eventRtbw?.ok ? "人体接口可用" : `人体接口失败：${endpoints.eventRtbw?.message || "-"}`;
     setText("legacyHikState", `${data.result?.reachable ? "数据服务可用" : "已保存，但接口测试失败"}：${rcv}；${rtbw}`);
     await refresh();
+    if (data.result?.reachable) await loadBackendShops(); // 连接成功 → 自动识别门店（门店令牌自动绑定）
   } catch (error) {
     setText("legacyHikState", `数据服务测试失败：${error.message}`);
     showError(error);
@@ -524,6 +603,11 @@ function renderScanResults(devices) {
         <select data-field="type">
           <option value="0" ${Number(device.type || 0) === 0 ? "selected" : ""}>入口/外侧</option>
           <option value="1" ${Number(device.type || 0) === 1 ? "selected" : ""}>出口/内侧</option>
+        </select>
+        <select data-field="positionType" aria-label="位置角色">
+          <option value="OUTSIDE_PASSBY" ${(device.positionType || "OUTSIDE_PASSBY") === "OUTSIDE_PASSBY" ? "selected" : ""}>店外过店</option>
+          <option value="ENTRANCE_COUNTER" ${(device.positionType || "") === "ENTRANCE_COUNTER" ? "selected" : ""}>门口进出</option>
+          <option value="INSIDE_BODY" ${(device.positionType || "") === "INSIDE_BODY" ? "selected" : ""}>店内人体</option>
         </select>
         <button data-action="open-login" data-web-url="${escapeHtml(device.webUrl || defaultCameraWebUrl(device))}">打开登录页</button>
         <button data-action="register" data-ip="${escapeHtml(device.ipAddress)}" data-mac="${escapeHtml(device.macAddress || "")}" data-device-index-code="${escapeHtml(deviceIndexCode)}" ${deviceIndexCode ? "" : "disabled"}>注册到采集器</button>
@@ -605,9 +689,15 @@ function renderSavedCameraRow(device) {
     <div class="camera-meta">
       <span>SDK ${escapeHtml(device.sdkPort || 8000)}</span>
       <span>${Number(device.type || 0) === 1 ? "出口/内侧" : "入口/外侧"}</span>
+      <span>位置：${escapeHtml({ OUTSIDE_PASSBY: "店外过店", ENTRANCE_COUNTER: "门口进出", INSIDE_BODY: "店内人体", UNKNOWN: "未配置" }[device.positionType] || device.positionType || "未配置")}</span>
       <span>最近事件 ${escapeHtml(latestEvent ? formatRelative(latestEvent.time) : "-")}</span>
     </div>
     <div class="camera-actions">
+      <select data-position-type="${escapeHtml(key)}" aria-label="位置角色">
+        <option value="OUTSIDE_PASSBY" ${(device.positionType || "OUTSIDE_PASSBY") === "OUTSIDE_PASSBY" ? "selected" : ""}>店外过店</option>
+        <option value="ENTRANCE_COUNTER" ${(device.positionType || "") === "ENTRANCE_COUNTER" ? "selected" : ""}>门口进出</option>
+        <option value="INSIDE_BODY" ${(device.positionType || "") === "INSIDE_BODY" ? "selected" : ""}>店内人体</option>
+      </select>
       <button class="secondary" data-saved-action="open" data-web-url="${escapeHtml(webUrl)}">打开</button>
       <button data-saved-action="register" data-device-key="${escapeHtml(key)}" ${device.invalidConfig ? "disabled" : ""}>下发</button>
       <button class="secondary" data-saved-action="delete" data-device-key="${escapeHtml(key)}" data-mac="${escapeHtml(device.macAddress || "")}">删除</button>
@@ -733,6 +823,7 @@ async function bindAndRegister(button) {
           deviceId: macAddress,
           deviceName: read("deviceName"),
           type: Number(read("type")),
+          positionType: read("positionType") || "UNKNOWN",
           sdkPort: Number(read("sdkPort") || $("sdkPort")?.value || $("collectorDefaultSdkPort")?.value || 8000),
           username: read("username") || $("cameraUsername")?.value,
           password: read("password") || $("cameraPassword")?.value,
@@ -812,6 +903,15 @@ async function deleteSavedCamera(button) {
   await refresh();
 }
 
+/** 更新已保存摄像头的位置角色（本地 + 远端注册信息） */
+async function updateSavedCameraPosition(deviceKey, positionType) {
+  await api("/api/devices/update", {
+    method: "POST",
+    body: JSON.stringify({ deviceKey, positionType })
+  });
+  await refresh();
+}
+
 function setScanCardStatus(deviceIndexCode, message) {
   scanResults = scanResults.map((device) => {
     const key = normalizeDeviceIndexCode(device.deviceIndexCode || device.macAddress || device.deviceKey || device.ipAddress);
@@ -876,7 +976,7 @@ async function saveConfig() {
         autoConnect: true
       },
       server: {
-        legacyHikBaseUrl: $("legacyHikBaseUrl")?.value || ""
+        serverUrl: $("serverUrl")?.value || ""
       },
       cameraDefaults: {
         username: $("cameraUsername")?.value || "admin",
@@ -1186,6 +1286,9 @@ function bindHandlers() {
     ["bindBtn", bindDevice],
     ["saveLegacyHikBtn", saveLegacyHikConfig],
     ["connectLegacyHikBtn", connectLegacyHik],
+    ["reloadBackendShopsBtn", loadBackendShops],
+    ["createShopBtn", createBackendShop],
+    ["saveShopBtn", saveShop],
     ["testEventBtn", testEvent],
     ["registerCollectorBtn", registerCollectorManual],
     ["testCollectorBtn", testCollector],
@@ -1202,6 +1305,12 @@ function bindHandlers() {
   });
   const shopSelect = $("shopSelect");
   if (shopSelect) shopSelect.onchange = selectShop;
+  // 已保存摄像头：位置角色修改 → 更新本地记录（后续下发/远端注册使用）
+  document.addEventListener("change", (event) => {
+    const sel = event.target.closest("[data-position-type]");
+    if (!sel) return;
+    updateSavedCameraPosition(sel.dataset.positionType, sel.value).catch(showError);
+  });
   document.addEventListener("click", (event) => {
     const copyButton = event.target.closest(".copy-release-url");
     if (copyButton) copyReleaseUrl(copyButton.dataset.url);

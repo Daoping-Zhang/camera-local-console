@@ -191,10 +191,24 @@
         </div>
       </div>
       <div class="compact-grid">
-        <label>hik 数据服务地址<input id="legacyHikBaseUrl" placeholder="http://www.fenqunshuju.com"></label>
+        <label>数据服务地址<input id="serverUrl" placeholder="https://kequn.fenqunshuju.com"></label>
+        <label>接入令牌<input id="siteToken" placeholder="管理面板品牌/门店信息页获取"></label>
         <label>客流接口<input value="/api/hik/eventRcv" readonly></label>
         <label>人体接口<input value="/api/hik/eventRtbw" readonly></label>
       </div>
+      <div class="compact-grid">
+        <label>门店<select id="shopSelect"></select></label>
+        <label>门店名称<input id="shopName" placeholder="选择或新建门店"></label>
+        <input type="hidden" id="shopId"/>
+        <button id="reloadBackendShopsBtn" class="secondary">拉取后端门店</button>
+        <button id="saveShopBtn">保存门店选择</button>
+      </div>
+      <div class="compact-grid">
+        <label>新建门店名称<input id="newShopName" placeholder="长沙XX零食店"></label>
+        <label>营业时间<input id="newShopHours" placeholder="08:00-23:00"></label>
+        <button id="createShopBtn" class="secondary">新建门店并选择</button>
+      </div>
+      <p id="shopState" class="hint"></p>
       <p id="legacyHikState" class="hint"></p>
       <div id="events" class="event-list"></div>
     </section>
