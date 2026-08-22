@@ -409,12 +409,16 @@ function startConsoleHeartbeat() {
   const beat = () => {
     try {
       const info = consoleInfo();
+      // 携带当前隧道信息（端口/token），后端同步到 DB，管理面板读 DB 即最新值
+      const tun = tunnelStatus();
       backendPost(serverUrl, siteToken, "/api/edge/console", {
         id: info.id,
         name: info.name,
         ip: info.ip,
         port: info.port,
         storeId: shopId,
+        tunnelPort: tun?.online ? tun.port : null,
+        tunnelToken: tun?.online ? tun.token : null,
       }).catch(() => {});
     } catch { /* 忽略，下轮再试 */ }
   };
